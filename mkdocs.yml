@@ -1,0 +1,52 @@
+site_name: LLMKGLitRev
+repo_url: https://github.com/Viet1004/LLMKGLitRev
+site_url: https://Viet1004.github.io/LLMKGLitRev
+site_description: This is a paper idea for using LLMs and Knowledge Graph to aid Literature Review
+site_author: TiefX
+edit_uri: edit/main/docs/
+repo_name: Viet1004/LLMKGLitRev
+copyright: Maintained by <a href="https://Viet1004.com">Viet1004</a>.
+
+nav:
+  - Home: index.md
+  - Modules: modules.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["src/llmkglitrev"]
+theme:
+  name: material
+  feature:
+    tabs: true
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Viet1004/LLMKGLitRev
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/LLMKGLitRev
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
