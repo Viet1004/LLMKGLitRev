@@ -1,8 +1,9 @@
 """Shared test fixtures for LLMKGLitRev test suite."""
 
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 @pytest.fixture

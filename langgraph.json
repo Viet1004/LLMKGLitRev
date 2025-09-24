@@ -1,0 +1,13 @@
+{
+    "dockerfile_lines": [],
+    "graphs": {
+      "research_agent": "./src/llmkglitrev/agents/research_agents.py:research_agent",
+      "supervisor_agent": "./src/llmkglitrev/agents/research_supervisor.py:supervisor_agent",
+      "proposal_generator_agent": "./src/llmkglitrev/agents/research_proposal_generator.py:proposal_generator_agent"
+    },
+    "python_version": "3.11",
+    "env": ".env",
+    "dependencies": [
+      "."
+    ]
+  }

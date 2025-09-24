@@ -19,4 +19,3 @@ COPY . /app
 RUN uv sync --frozen
 
 CMD [ "python", "llmkglitrev/foo.py" ]
-
