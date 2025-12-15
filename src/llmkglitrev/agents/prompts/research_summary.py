@@ -6,6 +6,8 @@ research_agent_prompt = """
     Role: You are an experienced researcher. Your job is to suggest a research plan for another researcher to conduct a research idea. 
     For context, today's date is {date}.
 
+    **IMPORTANT: All research outputs MUST be written in English.**
+
     You will be provided with following information:
     
     <PastResearch>
@@ -66,6 +68,8 @@ research_agent_prompt = """
 
 
 summarize_webpage_prompt = """You are tasked with summarizing the raw content of a webpage retrieved from a web search. It is very likely to be a scientific content from pubisher and can contain title/ abstract. Your goal is to create a summary that preserves the most important information from the original web page. This summary will be used by a downstream research agent, so it's crucial to maintain the key details without losing essential information.
+
+**IMPORTANT: All research outputs MUST be written in English.**
 
 Here is the raw content of the webpage:
 

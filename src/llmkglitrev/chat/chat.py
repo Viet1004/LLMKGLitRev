@@ -4,6 +4,7 @@ from langchain_huggingface import ChatHuggingFace
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_deepseek import ChatDeepSeek
 
 
 
@@ -38,7 +39,7 @@ class HuggingFaceChatModel(ChatModel):
         return response
 
 class AnthropicChatModel(ChatModel):
-    def __init__(self, model: str = "claude-3-5-sonnet-latest") -> None:
+    def __init__(self, model: str = "claude-sonnet-4-5-20250929") -> None:
         super().__init__()
         self.model = ChatAnthropic(model_name=model, timeout=300, stop=["\nHuman:"])
 
@@ -46,3 +47,11 @@ class AnthropicChatModel(ChatModel):
         response = self.model.invoke([HumanMessage(prompt)])
         return response
 
+class DeepSeekChatModel(ChatModel):
+    def __init__(self, model: str = "deepseek-chat") -> None:
+        super().__init__()
+        self.model = ChatDeepSeek(model=model)
+
+    def invoke(self, prompt: str) -> AIMessage:
+        response = self.model.invoke([HumanMessage(prompt)])
+        return response

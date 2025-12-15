@@ -28,6 +28,7 @@ dependencies = [
     "ipykernel>=6.30.0",
     "kg-gen>=0.1.6",
     "langchain>=0.3.27",
+    "streamlit>=1.32.0",
     "langchain-anthropic>=0.3.19",
     "langchain-aws>=0.2.31",
     "langchain-huggingface>=0.3.1",
@@ -38,9 +39,13 @@ dependencies = [
     "mcp[cli]>=1.12.2",
     "neo4j>=4.4.2,<5.0",
     "networkx>=3.0",
+    "plotly>=5.18.0",
     "pyarrow>=21.0.0",
+    "qdrant-client>=1.16.0",
     "smolagents>=1.20.0",
     "tavily-python>=0.7.11",
+    "transformers>=4.54.0",
+    "langchain-deepseek>=0.1.4",
 ]
 
 [project.urls]

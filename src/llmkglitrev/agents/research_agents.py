@@ -24,9 +24,10 @@ tools = [tavily_search, evaluation_tool]
 tools_by_name = {tool.name: tool for tool in tools}
 
 # researcher = init_chat_model(model="anthropic:claude-sonnet-4-20250514")
-researcher = init_chat_model(model="anthropic:claude-3-5-sonnet-latest")
-
-evaluator = init_chat_model(model="openai:gpt-4o", max_tokens=16000)
+# researcher = init_chat_model(model="anthropic:claude-sonnet-4-5-20250929")
+researcher = init_chat_model(model="deepseek:deepseek-chat")
+# evaluator = init_chat_model(model="openai:gpt-4o", max_tokens=16000)
+evaluator = init_chat_model(model="deepseek:deepseek-chat")
 
 researcher_with_tools = researcher.bind_tools(tools)
 

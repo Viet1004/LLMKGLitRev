@@ -14,15 +14,19 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from collections import defaultdict
-
+import os
 litellm.enable_json_schema_validation = True
 
 class KG_Generator:
     def __init__(self, model:str = "openai/gpt-4o"):
+        if 'openai' in model:
+            api_key = os.environ.get("OPENAI_API_KEY")
+        if 
+        
         self.kg = KGGen(
             model=model,  # Default model
             temperature=0.0,        # Default temperature
-            # api_key="YOUR_API_KEY"  # Optional if set in environment or using a local model
+            api_key=os.environ.get("")  # Optional if set in environment or using a local model
         )
         self.extractor = ChatAnthropic(model_name="claude-sonnet-4-20250514", timeout=30, stop=None)
         self.extractor_system_prompt = SystemMessage(content=extractor_prompt)

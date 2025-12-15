@@ -20,8 +20,8 @@ from llmkglitrev.agents.states import AgentState, AgentInputState, SupervisorSta
 from llmkglitrev.agents.research_supervisor import supervisor_agent
 from typing import Union
 from langchain.chat_models import init_chat_model
-writer_model = init_chat_model(model="openai:gpt-4o", max_tokens=16000) # model="anthropic:claude-sonnet-4-20250514", max_tokens=64000
-
+# writer_model = init_chat_model(model="openai:gpt-4o", max_tokens=16000) # model="anthropic:claude-sonnet-4-20250514", max_tokens=64000
+writer_model = init_chat_model(model="deepseek:deepseek-chat")
 def format_question(state:AgentState):
     return {
         "supervisor_messages": [HumanMessage(content=f"{state['messages']}.")]

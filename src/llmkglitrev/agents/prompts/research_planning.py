@@ -4,6 +4,8 @@ Prompt template for idea evaluation
 
 plan_research_system_message = """You are a research assistant that has conducted research on a topic by calling several tools and web searches. Your job is now to clean up the findings, but preserve all of the relevant statements and information that the researcher has gathered. For context, today's date is {date}.
 
+**IMPORTANT: All research outputs MUST be written in English.**
+
 <Task>
 You need to clean up information gathered from tool calls and web searches in the existing messages.
 You need to formulate the research you found with nice research agenda that is interesting and fit researcher profile (past research)
@@ -37,6 +39,8 @@ The proposal should be structured like this:
 
 plan_research_human_message = """All above messages are about research conducted by an AI Researcher for the following research topic:
 
+**IMPORTANT: All research outputs MUST be written in English.**
+
 RESEARCH TOPIC: {research_topic}
 
 Your task is to clean up these research findings while preserving ALL information that is relevant to answering this specific research question. 
@@ -52,6 +56,9 @@ The cleaned findings will be used for final proposal generation, so comprehensiv
 
 
 plan_research_full_agent = """Based on all the research conducted, create a comprehensive, well-structured answer from this research topic:
+
+**IMPORTANT: All research outputs MUST be written in English.**
+
 {research_topic}
 CRITICAL: Make sure the answer is written in the same language as the human messages!
 For example, if the user's messages are in English, then MAKE SURE you write your response in English. If the user's messages are in Chinese, then MAKE SURE you write your entire response in Chinese.

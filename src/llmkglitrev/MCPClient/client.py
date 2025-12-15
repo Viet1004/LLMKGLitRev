@@ -8,7 +8,6 @@ from smolagents import CodeAgent, LiteLLMModel, ToolCollection
 load_dotenv()
 
 try:
-
     # Use ToolCollection.from_mcp with stdio configuration from agent.json
     server_parameters = StdioServerParameters(
         command="uv",
@@ -25,7 +24,7 @@ try:
 
     with ToolCollection.from_mcp(server_parameters, trust_remote_code=True) as tool_collection:
         # model = InferenceClientModel(token=os.getenv("HF_TOKEN"))
-        model = LiteLLMModel(model_id="anthropic/claude-3-5-sonnet-latest")
+        model = LiteLLMModel(model_id="anthropic/claude-sonnet-4-5-20250929")
         agent = CodeAgent(
             tools=[*tool_collection.tools],
             model=model,

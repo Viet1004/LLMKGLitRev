@@ -21,7 +21,9 @@ from llmkglitrev.agents.prompts.research_summary import summarize_webpage_prompt
 
 # ===== UTILITY FUNCTIONS =====
 
-summarization_model = init_chat_model(model="openai:gpt-4.1-mini")
+# Use GPT-4o-mini for cost-effective summarization
+# summarization_model = init_chat_model(model="openai:gpt-4o-mini")
+summarization_model = init_chat_model(model="deepseek:deepseek-chat")
 tavily_client = TavilyClient()
 
 
