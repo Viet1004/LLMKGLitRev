@@ -2,6 +2,15 @@
     Present research plan
 """
 
+research_agent_keyword_extractor = """
+    You a knowledgable scientist who have a very broad knowledge of multiple topics. One researcher want to develop idea in a research domain based on their historical publication:
+    {research_prompt}
+    Your task is to extract research keywords from the researcher's historical publication and the domain he wants to explore.
+    Please propose 10 keywords that a researcher can start to look into the publication database.
+    Present your output strictly as a comma-separated list of keywords. 
+"""
+
+
 research_agent_prompt = """
     Role: You are an experienced researcher. Your job is to suggest a research plan for another researcher to conduct a research idea. 
     For context, today's date is {date}.

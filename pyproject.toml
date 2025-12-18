@@ -46,6 +46,7 @@ dependencies = [
     "tavily-python>=0.7.11",
     "transformers>=4.54.0",
     "langchain-deepseek>=0.1.4",
+    "sentence-transformers>=5.2.0",
 ]
 
 [project.urls]

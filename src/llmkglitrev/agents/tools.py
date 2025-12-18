@@ -7,6 +7,10 @@ including web search capabilities and content summarization tools.
 from pathlib import Path
 from datetime import datetime
 from typing_extensions import Annotated, List, Literal
+from dotenv import load_dotenv
+
+# Load environment variables first
+load_dotenv()
 
 from langchain.chat_models import init_chat_model 
 from langchain_core.messages import HumanMessage
@@ -288,3 +292,8 @@ class ConductResearch(BaseModel):
 class ResearchComplete(BaseModel):
     """Tool for indicating that the research process is complete."""
     pass
+
+# @tool
+# class AskHumanFeedback(BaseModel):
+#     """Tool to ask human if they are satisfied with the current directions to dived in more."""
+#     pass

@@ -55,6 +55,13 @@ class ClarifyWithUser(BaseModel):
         description="Verify message that we will start research after the user has provided the necessary information.",
     )
 
+class KeyWordsList(BaseModel):
+    """
+    Schema for keywords to search
+    """
+    keywords: List[str] = Field(
+        description="List of keywords extracted for literature search",
+    )
 class ResearchQuestion(BaseModel):
     """Schema for research brief generation."""
     research_brief: str = Field(
@@ -115,10 +122,17 @@ class SupervisorState(TypedDict):
     # Topic of research
     research_topic: Literal[str]
 
+    got_human_feedback: bool
     # Counter tracking the number of research iterations performed
     research_iterations: int
     # Raw unprocessed research notes collected from sub-agent research
     raw_notes: Annotated[list[str], operator.add]
+    pending_proposals: List[str]
+    # Retrieved papers from Neo4j literature database
+    retrieved_papers: List[dict]
+    # Formatted literature context for LLM
+    literature_context: str
+
 
 class AgentInputState(MessagesState):
     """Input state for the full agent - only contains messages from user input."""
@@ -133,9 +147,10 @@ class AgentState(MessagesState):
     Note: Some fields are duplicated across different state classes for proper
     state management between subgraphs and the main workflow.
     """
-    research_topic: str
+    research_topic: Literal[str]
     supervisor_messages: Annotated[Sequence[BaseMessage], add_messages]
     research_proposals: List[ResearchSummary]
+    research_keywords: list[str]
     # Raw unprocessed research notes collected during the research phase
     raw_notes: Annotated[list[str], operator.add] = []
     # Processed and structured notes ready for report generation

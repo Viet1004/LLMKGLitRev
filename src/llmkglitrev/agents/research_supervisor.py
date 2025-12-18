@@ -12,14 +12,18 @@ from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage,Too
 from langchain.chat_models import init_chat_model
 from llmkglitrev.agents.tools import (
     ConductResearch,
-    ResearchComplete
+    ResearchComplete,
+    # AskHumanFeedback
 )
-from llmkglitrev.agents.states import SupervisorState, ResearchSummary
+from llmkglitrev.agents.states import SupervisorState
 from llmkglitrev.agents.research_agents import research_agent
 from llmkglitrev.agents.tools import supervisor_think_tool, get_today_str
 from llmkglitrev.agents.prompts.supervisor_prompt import lead_researcher_prompt
 from langgraph.types import Command
 import asyncio
+from langgraph.types import interrupt
+from langgraph.checkpoint.memory import MemorySaver
+
 
 def get_proposals_from_tool_calls(messages: List[BaseMessage]) -> List[str]:
     """
@@ -71,25 +75,108 @@ max_concurrent_researchers = 2
 
 # ===== SUPERVISOR NODES =====
 
-async def supervisor(state: SupervisorState) -> Command[Literal["supervisor_tools"]]:
+async def supervisor(state: SupervisorState) -> Command[Literal["get_human_feedback", "supervisor_tools"]]:
     supervisor_messages = state.get("supervisor_messages", [])
+
+    # Get literature context if available
+    literature_context = state.get("literature_context", "")
+    if not literature_context:
+        literature_context = "No literature database available."
 
     # Prepare system message with current date and constraints
     system_message = lead_researcher_prompt.format(
         date=get_today_str(), 
         max_concurrent_research_units=max_concurrent_researchers,
-        max_researcher_iterations=max_researcher_iterations
+        max_researcher_iterations=max_researcher_iterations,
+        literature_context=literature_context
     )
     messages = [SystemMessage(content=system_message)] + supervisor_messages
 
     response = await supervisor_model_with_tools.ainvoke(input=messages)
+    
+    pending_proposals = []
+
+    if hasattr(response, 'tool_calls') and response.tool_calls:
+        for tool_call in response.tool_calls:
+            if tool_call["name"] == "supervisor_think_tool":
+                pending_proposals.append(tool_call["args"].get("reflection"))  # or "thinking" - check your tool's arg name
+
+    # Print for CLI/Jupyter
+    if not state.get("got_human_feedback") and pending_proposals:
+        print("\n" + "="*70)
+        print("🔍 PROPOSED RESEARCH DIRECTIONS:")
+        print("="*70)
+        for i, topic in enumerate(pending_proposals, 1):
+            print(f"\n{i}. {topic}")
+        print("\n" + "="*70)
+    
+
+    if state.get("got_human_feedback"):
+        return Command(
+            goto="supervisor_tools",
+            update={
+                "supervisor_messages": [response],
+                "research_iterations": state.get("research_iterations", 0) + 1
+            }
+        )
+    else:
+        return Command(
+            goto="get_human_feedback",
+            update={
+                "supervisor_messages": [response],
+                "pending_proposals": pending_proposals  # Store for Streamlit
+            }
+        )
+
+async def get_human_feedback(state: SupervisorState) -> Command[Literal["supervisor"]]:
+    """Incorporate human feedback into the supervisor's decision-making loop.
+
+    This node allows a human user to review the supervisor's latest decisions
+    and provide feedback or corrections before proceeding.
+
+    Args:
+        state: Current supervisor state with messages and iteration count
+
+    Returns:
+        Command to supervisor with instruction incorporated with human feedback.
+        
+    """
+    supervisor_messages = state.get("supervisor_messages", [])
+    most_recent_message = supervisor_messages[-1]
+    tool_calls = most_recent_message.tool_calls if hasattr(most_recent_message, 'tool_calls') else []
+    
+    # Get pending proposals from state
+    pending_proposals = state.get("pending_proposals", [])
+    
+    # Create interrupt payload with all necessary information
+    interrupt_payload = {
+        "type": "human_feedback_request",
+        "question": "The research supervisor has proposed the following research directions. Please review and provide feedback:",
+        "proposals": pending_proposals,
+        "instructions": "You can approve, modify, or reject these proposals. Provide specific feedback for each direction or general guidance."
+    }
+    
+    # Interrupt and wait for human response (no try/except!)
+    feedback = interrupt(interrupt_payload)
+    
+    # Create tool messages with the human feedback
+    feedback_messages = [
+        ToolMessage(
+            content=f"Human feedback: {feedback}",
+            tool_call_id=tool_call["id"],
+            name=tool_call["name"]
+        )
+        for tool_call in tool_calls
+    ]
+    
     return Command(
-        goto="supervisor_tools",
+        goto="supervisor",
         update={
-            "supervisor_messages": [response],
-            "research_iterations": state.get("research_iterations", 0) + 1
+            "supervisor_messages": feedback_messages,
+            "got_human_feedback": True
         }
     )
+
 
 async def supervisor_tools(state: SupervisorState) -> Command[Literal["supervisor", "__end__"]]:
     """Execute supervisor decisions - either conduct research or end the process.
@@ -213,12 +300,17 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
         )
 
 # ===== GRAPH CONSTRUCTION =====
+def create_interactive_supervisor():
+    # Build supervisor graph
+    supervisor_builder = StateGraph(SupervisorState)
+    supervisor_builder.add_node("supervisor", supervisor)
+    supervisor_builder.add_node("supervisor_tools", supervisor_tools)
+    supervisor_builder.add_node("get_human_feedback", get_human_feedback)
+    supervisor_builder.add_edge(START, "supervisor")
+    # supervisor_builder.add_edge("supervisor", "get_human_feedback")
+    # supervisor_builder.add_edge("get_human_feedback", "supervisor_tools")
+    supervisor_agent = supervisor_builder.compile(checkpointer=MemorySaver())
+    return supervisor_agent
 
-# Build supervisor graph
-supervisor_builder = StateGraph(SupervisorState)
-supervisor_builder.add_node("supervisor", supervisor)
-supervisor_builder.add_node("supervisor_tools", supervisor_tools)
-supervisor_builder.add_edge(START, "supervisor")
-supervisor_agent = supervisor_builder.compile()
 
 

@@ -20,10 +20,10 @@ python -m llmkglitrev.api_endpoint.chat &
 FASTAPI_PID=$!
 
 # Wait a bit for FastAPI to start
-sleep 3
+sleep 10
 
 # Run Streamlit in foreground
+# streamlit run src/llmkglitrev/api_endpoint/streamlit_interactive_app.py
 streamlit run src/llmkglitrev/api_endpoint/streamlit_app.py
-
 # Kill FastAPI when Streamlit stops
 kill $FASTAPI_PID
