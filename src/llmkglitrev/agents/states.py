@@ -155,6 +155,6 @@ class AgentState(MessagesState):
     raw_notes: Annotated[list[str], operator.add] = []
     # Processed and structured notes ready for report generation
     notes: Annotated[list[str], operator.add] = []
-    # Final formatted research report
-    final_proposal: str
+    # Final formatted research report (empty if workflow interrupted before completion)
+    final_proposal: str = ""
 

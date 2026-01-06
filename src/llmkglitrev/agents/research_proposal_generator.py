@@ -128,4 +128,11 @@ agent_builder.add_edge("final_research_proposal", END)
 # Compile with MemorySaver checkpointer to support interrupts
 checkpointer = MemorySaver()
 proposal_generator_agent = agent_builder.compile(checkpointer=checkpointer)
+
+# Import interactive runner for standalone usage
+from llmkglitrev.agents.interactive_runner import (
+    run_research_interactive,
+    run_research_interactive_sync,
+    resume_research_interactive
+)
     
