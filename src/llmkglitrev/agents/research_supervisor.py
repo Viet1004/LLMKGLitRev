@@ -17,12 +17,20 @@ from llmkglitrev.agents.tools import (
 )
 from llmkglitrev.agents.states import SupervisorState
 from llmkglitrev.agents.research_agents import research_agent
+from llmkglitrev.agents.character_agent import CharacterBasedResearchAgent  # NEW
+from llmkglitrev.characters import (  # NEW
+    CharacterManager,
+    ResearchCharacter,
+    ConversationArtifact,
+    ConversationArtifactManager
+)
 from llmkglitrev.agents.tools import supervisor_think_tool, get_today_str
 from llmkglitrev.agents.prompts.supervisor_prompt import lead_researcher_prompt
 from langgraph.types import Command
 import asyncio
 from langgraph.types import interrupt
 from langgraph.checkpoint.memory import MemorySaver
+import uuid
 
 
 def get_proposals_from_tool_calls(messages: List[BaseMessage]) -> List[str]:
@@ -183,8 +191,8 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
 
     Handles:
     - Executing supervisor_think_tool calls for strategic reflection
-    - Launching parallel research agents for different topics
-    - Aggregating research results
+    - Launching parallel CHARACTER-BASED research agents for different topics
+    - Aggregating research results and conversation artifacts
     - Determining when research is complete
 
     Args:
@@ -198,9 +206,14 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
     research_iterations = state.get("research_iterations", 0)
     most_recent_message = supervisor_messages[-1]
 
+    # NEW: Get character and session info
+    session_id = state.get("session_id", str(uuid.uuid4()))
+    active_characters = state.get("active_characters", [])
+
     # Initialize variables for single return pattern
     tool_messages = []
     all_raw_notes = []
+    conversation_artifacts = []  # NEW: Store artifacts
     next_step = "supervisor"  # Default next step
     should_end = False
 
@@ -208,7 +221,7 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
     exceeded_iterations = research_iterations >= max_researcher_iterations
     no_tool_calls = not most_recent_message.tool_calls
     research_complete = any(
-        tool_call["name"] == "ResearchComplete" 
+        tool_call["name"] == "ResearchComplete"
         for tool_call in most_recent_message.tool_calls
     )
 
@@ -221,12 +234,12 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
         try:
             # Separate think_tool calls from ConductResearch calls
             think_tool_calls = [
-                tool_call for tool_call in most_recent_message.tool_calls 
+                tool_call for tool_call in most_recent_message.tool_calls
                 if tool_call["name"] == "supervisor_think_tool"
             ]
 
             conduct_research_calls = [
-                tool_call for tool_call in most_recent_message.tool_calls 
+                tool_call for tool_call in most_recent_message.tool_calls
                 if tool_call["name"] == "ConductResearch"
             ]
 
@@ -243,42 +256,106 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
 
             # Handle ConductResearch calls (asynchronous)
             if conduct_research_calls:
-                # Launch parallel research agents
-                coros = [
-                    research_agent.ainvoke({
-                        "researcher_messages": [
-                            HumanMessage(content=tool_call["args"]["research_topic"])
-                        ],
-                        "research_topic": tool_call["args"]["research_topic"]
-                    }) 
-                    for tool_call in conduct_research_calls
-                ]
+                # NEW: Use character-based agents if available, otherwise fall back to generic
+                if active_characters and len(active_characters) > 0:
+                    # Instantiate character-based agents
+                    character_agents = []
 
-                # Wait for all research to complete
-                tool_results = await asyncio.gather(*coros)
+                    for i, tool_call in enumerate(conduct_research_calls):
+                        # Get character for this agent (cycle through if more calls than characters)
+                        char_dict = active_characters[i % len(active_characters)]
 
-                # Format research results as tool messages
-                # Each sub-agent returns compressed research findings in result["compressed_research"]
-                # We write this compressed research as the content of a ToolMessage, which allows
-                # the supervisor to later retrieve these findings via get_notes_from_tool_calls()
-                research_tool_messages = [
-                    ToolMessage(
-                        content=result.get("research_plan", "Error synthesizing research proposition"),
-                        name=tool_call["name"],
-                        tool_call_id=tool_call["id"]
-                    ) for result, tool_call in zip(tool_results, conduct_research_calls)
-                ]
+                        # Convert dict back to ResearchCharacter
+                        character = ResearchCharacter.model_validate(char_dict)
 
-                tool_messages.extend(research_tool_messages)
+                        # Partition literature for this domain
+                        retrieved_papers = state.get("retrieved_papers", [])
+                        literature_subset = [
+                            paper for paper in retrieved_papers
+                            if character.domain.lower() in paper.get("title", "").lower()
+                            or character.domain.lower() in paper.get("abstract", "").lower()
+                        ]
 
-                # Aggregate raw notes from all research
-                all_raw_notes = [
-                    "\n".join(result.get("raw_notes", [])) 
-                    for result in tool_results
-                ]
+                        # Create character agent
+                        agent = CharacterBasedResearchAgent(
+                            character=character,
+                            literature_subset=literature_subset,
+                            session_id=session_id
+                        )
+
+                        character_agents.append((agent, tool_call))
+
+                    # Launch parallel research with character agents
+                    coros = [
+                        agent.conduct_research(tool_call["args"]["research_topic"])
+                        for agent, tool_call in character_agents
+                    ]
+
+                    # Wait for all research to complete
+                    artifacts = await asyncio.gather(*coros)
+
+                    # Format research results as tool messages
+                    research_tool_messages = [
+                        ToolMessage(
+                            content=artifact.research_output,
+                            name=tool_call["name"],
+                            tool_call_id=tool_call["id"]
+                        ) for artifact, (_, tool_call) in zip(artifacts, character_agents)
+                    ]
+
+                    tool_messages.extend(research_tool_messages)
+
+                    # Store artifacts (as dicts for JSON serialization)
+                    conversation_artifacts = [artifact.model_dump() for artifact in artifacts]
+
+                    # Aggregate raw notes from artifacts
+                    all_raw_notes = [
+                        "\n".join(artifact.raw_notes)
+                        for artifact in artifacts
+                    ]
+
+                else:
+                    # FALLBACK: Use generic research agents
+                    coros = [
+                        research_agent.ainvoke({
+                            "researcher_messages": [
+                                HumanMessage(content=tool_call["args"]["research_topic"])
+                            ],
+                            "research_topic": tool_call["args"]["research_topic"],
+                            "tool_call_iterations": 0,
+                            "maximum_number_of_plan": 3,
+                            "compressed_research": "",
+                            "raw_notes": [],
+                            "dialogue_notes": [],
+                            "character_system_prompt": None
+                        })
+                        for tool_call in conduct_research_calls
+                    ]
+
+                    # Wait for all research to complete
+                    tool_results = await asyncio.gather(*coros)
+
+                    # Format research results as tool messages
+                    research_tool_messages = [
+                        ToolMessage(
+                            content=result.get("research_plan", "Error synthesizing research proposition"),
+                            name=tool_call["name"],
+                            tool_call_id=tool_call["id"]
+                        ) for result, tool_call in zip(tool_results, conduct_research_calls)
+                    ]
+
+                    tool_messages.extend(research_tool_messages)
+
+                    # Aggregate raw notes from all research
+                    all_raw_notes = [
+                        "\n".join(result.get("raw_notes", []))
+                        for result in tool_results
+                    ]
 
         except Exception as e:
             print(f"Error in supervisor tools: {e}")
+            import traceback
+            traceback.print_exc()
             should_end = True
             next_step = END
 
@@ -288,6 +365,7 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
             goto=next_step,
             update={
                 "research_proposals": get_proposals_from_tool_calls(supervisor_messages),
+                "conversation_artifacts": conversation_artifacts  # NEW
             }
         )
     else:
@@ -295,7 +373,8 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
             goto=next_step,
             update={
                 "supervisor_messages": tool_messages,
-                "raw_notes": all_raw_notes
+                "raw_notes": all_raw_notes,
+                "conversation_artifacts": conversation_artifacts  # NEW
             }
         )
 

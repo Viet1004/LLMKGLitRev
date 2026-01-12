@@ -15,6 +15,8 @@ from llmkglitrev.agents.prompts.research_summary import research_agent_prompt
 
 from llmkglitrev.agents.prompts.research_planning import plan_research_system_message, plan_research_human_message
 
+from llmkglitrev.characters import extract_dialogue_notes
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,10 +44,13 @@ def researcher_llm_call(state: ResearcherState):
     Return updated state with the model's response.
     """
 
+    # Use character system prompt if provided, otherwise default
+    system_prompt = state.get("character_system_prompt") or research_agent_prompt
+
     return {
         "researcher_messages": [
             researcher_with_tools.invoke(
-                [SystemMessage(content=research_agent_prompt)] + state["researcher_messages"]
+                [SystemMessage(content=system_prompt)] + state["researcher_messages"]
             )
         ]
     }
@@ -79,6 +84,8 @@ def research_formulation(state: ResearcherState) -> dict:
 
     Takes all the research messages and tool outputs and creates
     a compressed summary suitable for the supervisor's decision-making.
+
+    Also extracts dialogue notes for Socratic dialogue.
     """
 
     system_message = plan_research_system_message.format(date=get_today_str(), maximum_number_of_plan=state.get("maximum_number_of_plan", 3))
@@ -88,14 +95,25 @@ def research_formulation(state: ResearcherState) -> dict:
     # Extract raw notes from tool and AI messages
     raw_notes = [
         str(m.content) for m in filter_messages(
-            state["researcher_messages"], 
+            state["researcher_messages"],
             include_types=["tool", "ai"]
         )
     ]
 
+    # NEW: Extract dialogue notes for Socratic dialogue
+    dialogue_notes = extract_dialogue_notes(
+        messages=state.get("researcher_messages", []),
+        research_output=str(response.content),
+        max_notes_per_type=3
+    )
+
+    # Convert to dicts for JSON serialization
+    dialogue_notes_dicts = [note.model_dump() for note in dialogue_notes]
+
     return {
         "research_plan": str(response.content),
-        "raw_notes": ["\n".join(raw_notes)]
+        "raw_notes": ["\n".join(raw_notes)],
+        "dialogue_notes": dialogue_notes_dicts  # NEW
     }
 
 

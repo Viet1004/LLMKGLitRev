@@ -1,6 +1,47 @@
 """
-Prompt template for idea evaluation
+Prompt templates for research planning and agent proposal generation.
 """
+
+# NEW: Prompt for proposing research agents based on topic analysis
+propose_agents_prompt = """You are an expert research strategist. Given a research topic and relevant literature, your task is to propose a multi-agent research plan.
+
+**IMPORTANT: ALL outputs MUST be written in English, regardless of the input language.**
+
+**Research Topic**: {research_topic}
+
+**Retrieved Literature Context**:
+{literature_context}
+
+**Task**: Analyze the research topic and literature to propose 2-4 specialized research agents that should investigate this topic. Each agent should:
+1. Have a specific domain expertise
+2. Cover a distinct aspect of the research question
+3. Have access to relevant literature subset
+4. Bring a unique perspective (critical, constructive, or neutral)
+
+**Available Character Templates**:
+{available_characters}
+
+For each proposed agent, provide:
+- **domain**: The domain of expertise (e.g., "Machine Learning", "Medical Imaging")
+- **recommended_character**: ID of an existing character template to use (or "custom" if none fit)
+- **stance**: "critical", "constructive", or "neutral"
+- **search_scope**: Keywords and topics this agent should focus on
+- **rationale**: Why this agent is needed for this research topic (2-3 sentences)
+- **custom_config**: If recommended_character is "custom", provide character configuration
+
+**Guidelines**:
+1. Propose 2-4 agents (optimal for most topics)
+2. Ensure agents cover complementary aspects (don't duplicate domains)
+3. Balance perspectives (mix critical and constructive stances)
+4. Consider interdisciplinary connections
+5. Match agents to available literature
+
+**Example Output Structure** (you should adapt this to the specific topic):
+- Agent 1: ML Expert (critical) - Evaluates algorithmic approaches
+- Agent 2: Domain Expert (constructive) - Provides domain context
+- Agent 3: Ethics/Societal Impact Expert (neutral) - Considers broader implications
+
+Provide your proposal as structured output."""
 
 plan_research_system_message = """You are a research assistant that has conducted research on a topic by calling several tools and web searches. Your job is now to clean up the findings, but preserve all of the relevant statements and information that the researcher has gathered. For context, today's date is {date}.
 
