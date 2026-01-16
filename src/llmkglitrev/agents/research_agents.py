@@ -11,6 +11,12 @@ from llmkglitrev.agents.states import ResearcherState, ResearcherOutputState, Re
 
 from llmkglitrev.agents.tools import tavily_search, get_today_str, evaluation_tool, planning_tool
 
+from llmkglitrev.agents.academic_search_tools import (
+    search_academic_papers,
+    search_google_scholar,
+    search_arxiv
+)
+
 from llmkglitrev.agents.prompts.research_summary import research_agent_prompt
 
 from llmkglitrev.agents.prompts.research_planning import plan_research_system_message, plan_research_human_message
@@ -22,7 +28,14 @@ from dotenv import load_dotenv
 load_dotenv()
 # Set up tools and model binding
 # tools = [tavily_search, planning_tool, evaluation_tool]
-tools = [tavily_search, evaluation_tool]
+# Academic search tools (primary for academic content)
+tools = [
+    # search_academic_papers,    # PRIMARY: Multi-source academic search (Google Scholar + arXiv)
+    # search_google_scholar,     # Specific: Google Scholar only (IEEE, Springer, ACM, Nature, etc.)
+    search_arxiv,              # Specific: arXiv preprints (CS, physics, math, stats)
+    tavily_search,             # FALLBACK: General web search for non-academic content
+    evaluation_tool
+]
 tools_by_name = {tool.name: tool for tool in tools}
 
 # researcher = init_chat_model(model="anthropic:claude-sonnet-4-20250514")

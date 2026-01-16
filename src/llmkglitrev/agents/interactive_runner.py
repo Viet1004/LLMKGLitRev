@@ -234,15 +234,45 @@ async def run_research_interactive(
         {"messages": [HumanMessage(content=query)]},
         config=config
     )
-    
+
     iteration = 0
-    
+
+    # Check for both old-style (__interrupt__) and new-style (interrupt_before) interrupts
+    def has_interrupt():
+        # Old style: interrupt() function creates __interrupt__ in result
+        if "__interrupt__" in result:
+            return True
+        # New style: interrupt_before configuration - check state.next
+        agent_state = agent.get_state(config)
+        return bool(agent_state.next)
+
     # Handle interrupts in a loop
-    while "__interrupt__" in result and iteration < max_iterations:
+    while has_interrupt() and iteration < max_iterations:
         iteration += 1
-        
-        # Extract interrupt data
-        interrupt_data = result["__interrupt__"][0].value
+
+        # Extract interrupt data based on interrupt style
+        if "__interrupt__" in result:
+            # Old style: interrupt() function
+            interrupt_data = result["__interrupt__"][0].value
+        else:
+            # New style: interrupt_before - get state to check what node is next
+            agent_state = agent.get_state(config)
+            next_node = agent_state.next[0] if agent_state.next else None
+
+            if next_node == "process_plan_approval":
+                # Plan approval interrupt
+                proposed_plan = agent_state.values.get("proposed_research_plan", {})
+                interrupt_data = {
+                    "type": "research_plan_approval",
+                    "question": "Please review the proposed research plan. You can approve, modify, or reject it.",
+                    "plan": proposed_plan
+                }
+            else:
+                # Generic interrupt
+                interrupt_data = {
+                    "type": "general",
+                    "question": f"Agent paused at node: {next_node}. Please provide feedback."
+                }
 
         print("\n" + "="*70)
         print("🔔 INTERRUPT: Agent is requesting human feedback")

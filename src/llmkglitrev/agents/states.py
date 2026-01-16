@@ -170,8 +170,8 @@ class ResearchPlan(BaseModel):
 
     interdisciplinary_connections: Optional[str] = Field(
         default=None,
-        description="How the agents will work together across disciplines",
-        max_length=300
+        description="How the agents will work together across disciplines (3-4 sentences max)",
+        max_length=600
     )
 
 

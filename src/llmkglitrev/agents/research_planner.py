@@ -8,7 +8,6 @@ specialized agents and their configurations.
 
 from typing import Dict, Any
 from langchain.chat_models import init_chat_model
-from langgraph.types import interrupt
 
 from llmkglitrev.agents.states import AgentState, ResearchPlan, AgentProposal
 from llmkglitrev.agents.prompts.research_planning import propose_agents_prompt
@@ -28,24 +27,29 @@ async def propose_research_plan(state: AgentState) -> Dict[str, Any]:
 
     This node:
     1. Analyzes the research topic and retrieved literature
-    2. Proposes 2-4 specialized research agents
-    3. Recommends character templates or custom configurations
-    4. Interrupts for human approval before proceeding
+    2. Uses identified topics from broad search
+    3. Proposes 2-4 specialized research agents (one per topic)
+    4. Assigns seed papers to each agent
+    5. Interrupts for human approval before proceeding
 
     Args:
-        state: Current agent state with research_topic and literature_context
+        state: Current agent state with research_topic, topics, topic_papers, and literature_context
 
     Returns:
         State update with proposed_research_plan and interrupt for human feedback
     """
     research_topic = state.get("research_topic", "")
     literature_context = state.get("literature_context", "No literature retrieved")
+    topics = state.get("topics", [])
+    topic_papers = state.get("topic_papers", {})
+    broad_papers = state.get("broad_papers", [])
 
     print("\n" + "="*70)
     print("📋 PROPOSING RESEARCH PLAN")
     print("="*70)
     print(f"\n📝 Research Topic: {research_topic}")
-    print(f"📚 Retrieved {len(state.get('retrieved_papers', []))} papers from literature database")
+    print(f"📚 Retrieved {len(broad_papers)} papers from arXiv")
+    print(f"🏷️  Identified {len(topics)} topics: {', '.join(topics)}")
 
     # Load available character templates
     char_manager = CharacterManager()
@@ -62,13 +66,27 @@ async def propose_research_plan(state: AgentState) -> Dict[str, Any]:
     print(f"\n🎭 Available character templates: {len(available_chars)}")
 
     # Generate research plan using LLM
-    print("\n🤔 Analyzing topic and proposing agent configuration...")
+    print("\n🤔 Analyzing topics and proposing agent configuration...")
 
-    prompt = propose_agents_prompt.format(
-        research_topic=research_topic,
-        literature_context=literature_context[:3000],  # Limit context size
-        available_characters=available_characters_str
-    )
+    # Format topics for prompt
+    topics_str = "\n".join([f"{i+1}. {topic}" for i, topic in enumerate(topics)])
+
+    # Add topic information to prompt
+    prompt_with_topics = f"""
+Based on broad literature search, we identified these research topics:
+
+{topics_str}
+
+Each topic should be assigned to a different domain expert character.
+
+{propose_agents_prompt.format(
+    research_topic=research_topic,
+    literature_context=literature_context[:3000],
+    available_characters=available_characters_str
+)}
+"""
+
+    prompt = prompt_with_topics
 
     try:
         research_plan: ResearchPlan = await planning_model.ainvoke(prompt)
@@ -86,44 +104,29 @@ async def propose_research_plan(state: AgentState) -> Dict[str, Any]:
         # Convert to dict for JSON serialization
         plan_dict = research_plan.model_dump()
 
-        # Prepare interrupt data for user approval
-        interrupt_data = {
-            "type": "research_plan_approval",
-            "question": "Please review the proposed research plan. You can approve, modify, or reject it.",
-            "plan": plan_dict,
-            "instructions": """
-Options:
-1. Type 'approve' to proceed with this plan
-2. Type 'reject' to ask for a new plan
-3. Provide JSON to modify agent configurations
-4. Add/remove agents by editing the plan
+        # Assign topics and seed papers to each agent
+        # Match agents to topics (1-to-1 mapping)
+        for i, agent in enumerate(plan_dict["proposed_agents"]):
+            # Assign topic (round-robin if more agents than topics)
+            topic_idx = i % len(topics) if topics else 0
+            assigned_topic = topics[topic_idx] if topics else research_topic
 
-Example modification:
-{
-  "approved": true,
-  "modifications": {
-    "agents": [
-      {
-        "domain": "Machine Learning",
-        "recommended_character": "ml_expert_critical",
-        "stance": "critical",
-        "search_scope": ["deep learning", "transfer learning"],
-        "rationale": "Custom rationale..."
-      }
-    ]
-  }
-}
-"""
-        }
+            # Get seed papers for this topic
+            seed_papers = topic_papers.get(assigned_topic, [])[:5]  # Max 5 seed papers per agent
+
+            # Add to agent config
+            agent["assigned_topic"] = assigned_topic
+            agent["seed_papers"] = seed_papers
+
+            print(f"\n  📌 Agent {i+1} assigned to topic: {assigned_topic}")
+            print(f"     📄 Seed papers: {len(seed_papers)}")
 
         print("\n" + "="*70)
-        print("⏸️  INTERRUPT: Waiting for human approval")
+        print("⏸️  Plan ready for approval - graph will interrupt before process_plan_approval")
         print("="*70)
 
-        # Interrupt workflow for human approval
-        # The interactive_runner will handle displaying this and collecting feedback
-        human_feedback = interrupt(interrupt_data)
-
+        # Return the plan - graph will automatically interrupt before process_plan_approval
+        # No need to call interrupt() - it's handled by interrupt_before configuration
         return {
             "proposed_research_plan": plan_dict,
             "plan_approved": False  # Will be set to True after approval
@@ -157,16 +160,9 @@ Example modification:
         }
 
         print("\n⚠️  Using fallback research plan with default templates")
+        print("⏸️  Fallback plan ready - graph will interrupt before process_plan_approval")
 
-        interrupt_data = {
-            "type": "research_plan_approval",
-            "question": "LLM planning failed. Please review the fallback plan.",
-            "plan": fallback_plan,
-            "instructions": "Type 'approve' to proceed or provide custom agent configurations."
-        }
-
-        human_feedback = interrupt(interrupt_data)
-
+        # Return fallback plan - graph will automatically interrupt
         return {
             "proposed_research_plan": fallback_plan,
             "plan_approved": False
@@ -209,6 +205,8 @@ def process_plan_approval(state: AgentState) -> Dict[str, Any]:
             "character_id": agent_proposal["recommended_character"],
             "stance": agent_proposal["stance"],
             "search_scope": agent_proposal["search_scope"],
+            "assigned_topic": agent_proposal.get("assigned_topic", ""),  # NEW: Topic from broad search
+            "seed_papers": agent_proposal.get("seed_papers", []),  # NEW: Seed papers for this topic
             "custom_config": agent_proposal.get("custom_config")
         }
         character_configs.append(char_config)

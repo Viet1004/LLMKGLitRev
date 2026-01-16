@@ -156,7 +156,7 @@ with st.sidebar:
     st.title("⚙️ Settings")
     st.markdown("---")
     
-    if st.button("🗑️ New Conversation", use_container_width=True):
+    if st.button("🗑️ New Conversation", width='stretch'):
         st.session_state.messages = []
         st.session_state.thread_id = f"streamlit-session-{len(st.session_state.messages)}"
         st.session_state.awaiting_feedback = False

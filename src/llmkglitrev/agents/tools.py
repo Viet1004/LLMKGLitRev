@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # Load environment variables first
 load_dotenv()
 
-from langchain.chat_models import init_chat_model 
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool, InjectedToolArg
@@ -20,6 +20,16 @@ from tavily import TavilyClient
 from pydantic import BaseModel, Field
 from llmkglitrev.agents.states import ResearchSummary
 from llmkglitrev.agents.prompts.research_summary import summarize_webpage_prompt
+
+# Import docling for HTML to markdown conversion
+try:
+    from docling.document_converter import DocumentConverter
+    from docling.datamodel.base_models import InputFormat
+    DOCLING_AVAILABLE = True
+except ImportError:
+    DOCLING_AVAILABLE = False
+    print("Warning: docling not available. Install with: pip install docling")
+
 # from deep_research_from_scratch.state_research import Summary
 # from deep_research_from_scratch.prompts import summarize_webpage_prompt
 
@@ -30,63 +40,185 @@ from llmkglitrev.agents.prompts.research_summary import summarize_webpage_prompt
 summarization_model = init_chat_model(model="deepseek:deepseek-chat")
 tavily_client = TavilyClient()
 
+# Academic domains to prioritize in search
+ACADEMIC_DOMAINS = [
+    "ieee.org",
+    "springer.com",
+    "acm.org",
+    "scholar.google.com",
+    "arxiv.org",
+    "sciencedirect.com",
+    "nature.com",
+    "science.org",
+    "plos.org",
+    "bmj.com",
+    "thelancet.com",
+    "cell.com",
+    "wiley.com",
+    "tandfonline.com",
+    "cambridge.org",
+    "oxford.org",
+    "jstor.org",
+    "researchgate.net",
+    "semanticscholar.org",
+    "pubmed.ncbi.nlm.nih.gov",
+]
 
 
 def get_today_str() -> str:
     """Get current date in a human-readable format."""
     return datetime.now().strftime("%a %b %-d, %Y")
 
+
+def convert_html_to_markdown(html_content: str) -> str:
+    """Convert HTML content to markdown format using docling.
+
+    Args:
+        html_content: Raw HTML content from webpage
+
+    Returns:
+        Markdown-formatted content or original HTML if conversion fails
+    """
+    if not DOCLING_AVAILABLE:
+        # Fallback: return raw content if docling not available
+        return html_content
+
+    try:
+        # Initialize document converter
+        converter = DocumentConverter()
+
+        # Convert HTML to markdown
+        # Note: docling works with file paths or URLs
+        # For raw HTML content, we need to save temporarily
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+            f.write(html_content)
+            temp_path = f.name
+
+        try:
+            # Convert document
+            result = converter.convert(temp_path)
+            markdown_content = result.document.export_to_markdown()
+            return markdown_content
+        finally:
+            # Clean up temp file
+            Path(temp_path).unlink(missing_ok=True)
+
+    except Exception as e:
+        print(f"Failed to convert HTML to markdown: {str(e)}")
+        return html_content
+
+
+def is_academic_source(url: str) -> bool:
+    """Check if URL is from an academic source.
+
+    Args:
+        url: URL to check
+
+    Returns:
+        True if URL contains academic domain, False otherwise
+    """
+    url_lower = url.lower()
+    return any(domain in url_lower for domain in ACADEMIC_DOMAINS)
+
 def format_search_output(summarized_results: dict) -> str:
     """Format search results into a well-structured string output.
-    
+
     Args:
         summarized_results: Dictionary of processed search results
-        
+
     Returns:
         Formatted string of search results with clear source separation
     """
     if not summarized_results:
         return "No valid search results found. Please try different search queries or use a different search API."
-    
-    formatted_output = "Search results: \n\n"
-    
-    for i, (url, result) in enumerate(summarized_results.items(), 1):
-        formatted_output += f"\n\n--- SOURCE {i}: {result['title']} ---\n"
-        formatted_output += f"URL: {url}\n\n"
-        formatted_output += f"SUMMARY:\n{result['content']}\n\n"
-        formatted_output += "-" * 80 + "\n"
-    
+
+    # Separate academic and non-academic sources
+    academic_results = {url: result for url, result in summarized_results.items()
+                       if is_academic_source(url)}
+    non_academic_results = {url: result for url, result in summarized_results.items()
+                           if not is_academic_source(url)}
+
+    formatted_output = "Search results:\n\n"
+
+    # Prioritize academic sources first
+    if academic_results:
+        formatted_output += "=== ACADEMIC SOURCES ===\n\n"
+        for i, (url, result) in enumerate(academic_results.items(), 1):
+            formatted_output += f"\n--- SOURCE {i}: {result['title']} [ACADEMIC] ---\n"
+            formatted_output += f"URL: {url}\n\n"
+            formatted_output += f"SUMMARY:\n{result['content']}\n\n"
+            formatted_output += "-" * 80 + "\n"
+
+    # Then show non-academic sources
+    if non_academic_results:
+        formatted_output += "\n=== OTHER SOURCES ===\n\n"
+        start_idx = len(academic_results) + 1
+        for i, (url, result) in enumerate(non_academic_results.items(), start_idx):
+            formatted_output += f"\n--- SOURCE {i}: {result['title']} ---\n"
+            formatted_output += f"URL: {url}\n\n"
+            formatted_output += f"SUMMARY:\n{result['content']}\n\n"
+            formatted_output += "-" * 80 + "\n"
+
     return formatted_output
 
 
 def tavily_search_multiple(
-    search_queries: List[str], 
-    max_results: int = 3, 
-    topic: Literal["general", "news", "finance"] = "general", 
-    include_raw_content: bool = True, 
+    search_queries: List[str],
+    max_results: int = 3,
+    topic: Literal["general", "news", "finance"] = "general",
+    include_raw_content: bool = True,
+    prioritize_academic: bool = True,
 ) -> List[dict]:
-    """Perform search using Tavily API for multiple queries.
+    """Perform search using Tavily API for multiple queries with academic source priority.
 
     Args:
         search_queries: List of search queries to execute
         max_results: Maximum number of results per query
         topic: Topic filter for search results
         include_raw_content: Whether to include raw webpage content
+        prioritize_academic: Whether to prioritize academic sources in results
 
     Returns:
         List of search result dictionaries
     """
-    
-    # Execute searches sequentially. Note: yon can use AsyncTavilyClient to parallelize this step.
+
+    # Execute searches sequentially. Note: you can use AsyncTavilyClient to parallelize this step.
     search_docs = []
     for query in search_queries:
-        result = tavily_client.search(
-            query,
-            max_results=max_results,
-            include_raw_content=include_raw_content,
-            topic=topic
-        )
-        search_docs.append(result)
+        # Add academic keywords to encourage scholarly results
+        enhanced_query = query
+        if prioritize_academic:
+            # Add academic context to query
+            enhanced_query = f"{query} site:scholar.google.com OR site:ieee.org OR site:arxiv.org OR site:springer.com OR site:acm.org"
+
+        try:
+            result = tavily_client.search(
+                enhanced_query,
+                max_results=max_results * 2,  # Request more to filter for academic
+                include_raw_content=include_raw_content,
+                topic=topic
+            )
+
+            # Filter and prioritize academic sources
+            if prioritize_academic and 'results' in result:
+                academic_results = [r for r in result['results'] if is_academic_source(r.get('url', ''))]
+                other_results = [r for r in result['results'] if not is_academic_source(r.get('url', ''))]
+
+                # Combine: academic first, then others up to max_results
+                filtered_results = academic_results[:max_results]
+                remaining_slots = max_results - len(filtered_results)
+                if remaining_slots > 0:
+                    filtered_results.extend(other_results[:remaining_slots])
+
+                result['results'] = filtered_results
+
+            search_docs.append(result)
+
+        except Exception as e:
+            print(f"Search error for query '{query}': {str(e)}")
+            # Return empty result for failed query
+            search_docs.append({'results': []})
 
     return search_docs
 
@@ -124,23 +256,34 @@ def tavily_search(
     # Format output for consumption
     return format_search_output(summarized_results)
 
-def summarize_webpage_content(webpage_content: str) -> str:
+def summarize_webpage_content(webpage_content: str, convert_to_markdown: bool = True) -> str:
     """Summarize webpage content using the configured summarization model.
-    
+
     Args:
         webpage_content: Raw webpage content to summarize
-        
+        convert_to_markdown: Whether to convert HTML to markdown first (saves context)
+
     Returns:
         Formatted summary with key excerpts
     """
     try:
+        # Convert HTML to markdown for more concise context
+        content_to_summarize = webpage_content
+        if convert_to_markdown and DOCLING_AVAILABLE:
+            try:
+                content_to_summarize = convert_html_to_markdown(webpage_content)
+                print(f"✓ Converted HTML to markdown (reduced from {len(webpage_content)} to {len(content_to_summarize)} chars)")
+            except Exception as e:
+                print(f"Markdown conversion failed, using raw content: {str(e)}")
+                content_to_summarize = webpage_content
+
         # Set up structured output model for summarization
         structured_model = summarization_model.with_structured_output(ResearchSummary)
-        
-        # Generate summary
+
+        # Generate summary from markdown content
         summary = structured_model.invoke([
             HumanMessage(content=summarize_webpage_prompt.format(
-                webpage_content=webpage_content, 
+                webpage_content=content_to_summarize,
                 date=get_today_str()
             ))
         ])
@@ -152,9 +295,9 @@ def summarize_webpage_content(webpage_content: str) -> str:
             f"<method>\n{summary.method}\n</method>\n\n"
             f"<result>\n{summary.result}\n</result>\n"
         )
-        
+
         return formatted_summary
-        
+
     except Exception as e:
         print(f"Failed to summarize webpage: {str(e)}")
         return webpage_content[:1000] + "..." if len(webpage_content) > 1000 else webpage_content
