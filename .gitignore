@@ -141,3 +141,6 @@ cython_debug/
 
 playground/
 data/
+
+# Exclude MCP Server (local development only, not for Streamlit Cloud)
+src/llmkglitrev/MCPServer/
