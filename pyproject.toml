@@ -88,9 +88,9 @@ check_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
-exclude = [
-    "src/llmkglitrev/MCPServer/arxiv-mcp-server/"
-]
+# exclude = [
+#     "src/llmkglitrev/MCPServer/arxiv-mcp-server/"
+# ]
 # Ignore specific untyped libraries
 [[tool.mypy.overrides]]
 module = [
