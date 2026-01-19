@@ -1,6 +1,48 @@
 """
-Prompt template for idea evaluation
+Prompt templates for research planning and agent proposal generation.
 """
+
+# NEW: Prompt for proposing research agents based on topic analysis
+propose_agents_prompt = """You are an expert research strategist. Given a research topic and relevant literature, your task is to propose a multi-agent research plan.
+
+**IMPORTANT: ALL outputs MUST be written in English, regardless of the input language.**
+
+**Research Topic**: {research_topic}
+
+**Retrieved Literature Context**:
+{literature_context}
+
+**Task**: Analyze the research topic and literature to propose 2-4 specialized research agents that should investigate this topic. Each agent should:
+1. Have a specific domain expertise
+2. Cover a distinct aspect of the research question
+3. Have access to relevant literature subset
+4. Bring a unique perspective (critical, constructive, or neutral)
+
+**Available Character Templates**:
+{available_characters}
+
+For each proposed agent, provide:
+- **domain**: The domain of expertise (e.g., "Time Series Analysis", "Network Optimization", "Signal Processing")
+- **recommended_character**: ID of an existing character template to use (or "custom" if none fit)
+- **stance**: "critical", "constructive", or "neutral"
+- **search_scope**: Keywords and topics this agent should focus on
+- **rationale**: Why this agent is needed for this research topic (2-3 sentences)
+- **custom_config**: If recommended_character is "custom", provide character configuration
+
+**CRITICAL CONSTRAINTS**:
+1. **research_strategy**: MUST be 2-3 sentences MAX (under 1000 characters). Be concise.
+2. Propose 2-4 agents (optimal for most topics)
+3. Ensure agents cover complementary aspects (don't duplicate domains)
+4. Balance perspectives (mix critical and constructive stances)
+5. Consider interdisciplinary connections
+6. Match agents to available literature AND the research topic
+
+**Example Output Structure** (you should adapt this to the specific topic):
+- Agent 1: Domain Expert (critical) - Evaluates technical approaches
+- Agent 2: Application Expert (constructive) - Provides practical context
+- Agent 3: Methods Expert (neutral) - Considers methodological aspects
+
+Provide your proposal as structured output."""
 
 plan_research_system_message = """You are a research assistant that has conducted research on a topic by calling several tools and web searches. Your job is now to clean up the findings, but preserve all of the relevant statements and information that the researcher has gathered. For context, today's date is {date}.
 
@@ -57,14 +99,11 @@ The cleaned findings will be used for final proposal generation, so comprehensiv
 
 plan_research_full_agent = """Based on all the research conducted, create a comprehensive, well-structured answer from this research topic:
 
-**IMPORTANT: All research outputs MUST be written in English.**
-
 {research_topic}
-CRITICAL: Make sure the answer is written in the same language as the human messages!
-For example, if the user's messages are in English, then MAKE SURE you write your response in English. If the user's messages are in Chinese, then MAKE SURE you write your entire response in Chinese.
-This is critical. The user will only understand the answer if it is written in the same language as their input message.
 
 Today's date is {date}.
+
+**CRITICAL LANGUAGE REQUIREMENT: ALL outputs MUST be written in English, regardless of the input language or user's locale. This is mandatory.**
 
 Here are the findings from the research that you conducted:
 <Findings>
@@ -97,9 +136,7 @@ For each section of the proposal, do the following:
 - Each section should be as long as necessary to deeply answer the question with the information you have gathered. It is expected that sections will be fairly long and verbose.
 - Use bullet points to list out information when appropriate, but by default, write in paragraph form.
 
-REMEMBER:
-The brief and research may be in English, but you need to translate this information to the right language when writing the final answer.
-Make sure the final answer proposal is in the SAME language as the human messages in the message history.
+**FINAL REMINDER: Your entire response MUST be in English. Do not translate or adapt to any other language.**
 
 Format the proposal in clear markdown with proper structure and include source references where appropriate.
 

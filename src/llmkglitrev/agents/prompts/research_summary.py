@@ -12,10 +12,10 @@ research_agent_keyword_extractor = """
 
 
 research_agent_prompt = """
-    Role: You are an experienced researcher. Your job is to suggest a research plan for another researcher to conduct a research idea. 
+    Role: You are an experienced researcher. Your job is to suggest a research plan for another researcher to conduct a research idea.
     For context, today's date is {date}.
 
-    **IMPORTANT: All research outputs MUST be written in English.**
+    **CRITICAL LANGUAGE REQUIREMENT: ALL research outputs, tool responses, evaluations, and communications MUST be written in English, regardless of any other context. This is mandatory and non-negotiable.**
 
     You will be provided with following information:
     
@@ -72,6 +72,8 @@ research_agent_prompt = """
     - What are gaps that the researcher can fill with his/her expertise?
     - Should I search more or am I ready to propose my research agenda?
     </Show Your Thinking>
+
+    **REMEMBER: Write ALL outputs in English only.**
 """
 
 

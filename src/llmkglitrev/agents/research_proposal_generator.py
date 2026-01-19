@@ -23,16 +23,21 @@ from llmkglitrev.agents.prompts.research_planning import plan_research_full_agen
 from llmkglitrev.agents.prompts.research_summary import research_agent_keyword_extractor
 from llmkglitrev.agents.states import AgentState, AgentInputState, SupervisorState, KeyWordsList
 from llmkglitrev.agents.research_supervisor import create_interactive_supervisor
-from llmkglitrev.retrieval.neo4j_search import get_neo4j_search
-from typing import Union
+from llmkglitrev.agents.research_planner import propose_research_plan, process_plan_approval
+from llmkglitrev.agents.academic_search_tools import (
+    _search_arxiv_internal,
+    _deduplicate_papers
+)
+from typing import Union, List, Dict
 from langchain.chat_models import init_chat_model
+import uuid
 # writer_model = init_chat_model(model="openai:gpt-4o", max_tokens=16000) # model="anthropic:claude-sonnet-4-20250514", max_tokens=64000
 writer_model = init_chat_model(model="deepseek:deepseek-chat")
 
 summarize_model = init_chat_model(model="deepseek:deepseek-chat").with_structured_output(KeyWordsList)
 async def format_question(state:AgentState):
     """
-    Generate research keywords
+    Generate research keywords and initialize session.
     """
     query = research_agent_keyword_extractor.format(
         research_prompt=state.get('messages', "")
@@ -40,63 +45,347 @@ async def format_question(state:AgentState):
 
     keywords = await summarize_model.ainvoke(query)
 
+    # Extract research topic from messages
+    messages = state.get('messages', [])
+    research_topic = str(messages[0].content) if messages else ""
+
+    # Generate session ID if not present
+    session_id = state.get('session_id', '') or str(uuid.uuid4())
+
     return {
         "supervisor_messages": [HumanMessage(content=f"{state['messages']}.")],
-        "research_keywords": keywords.keywords
+        "research_keywords": keywords.keywords,
+        "research_topic": research_topic,
+        "session_id": session_id,
+        "plan_approved": False,
+        "active_characters": [],
+        "conversation_artifacts": [],
+        "character_configs": []
     }
 
-def retrieve_literature(state: AgentState):
+async def broad_literature_search(state: AgentState):
     """
-    Retrieve relevant papers from Neo4j literature database.
-    
-    This node searches the knowledge base for papers related to the user's query
-    and provides them as context for the supervisor.
+    Broad literature search using arXiv only.
+
+    Replaces Neo4j vector search with direct arXiv academic source search.
+    Returns 20-40 papers across multiple topics to give broad landscape.
     """
-    query_text = state['research_keywords'] 
+    keywords = state.get('research_keywords', [])
+    research_topic = state.get('research_topic', '')
 
-    query_text = ", ".join(query_text)
+    print(f"\n🔍 Broad Literature Search (arXiv)")
+    print(f"   Keywords: {', '.join(keywords[:5])}")
+    print("="*70)
 
-    print(f"\n🔍 Searching literature database for: {query_text}")
-    
     try:
-        # Get Neo4j search instance
-        neo4j_search = get_neo4j_search()
-        
-        # Search for relevant papers
-        papers = neo4j_search.search_similar_papers(
-            query_text=str(query_text),
-            top_k=10  # Retrieve top 10 most relevant papers
+        all_papers = []
+
+        # Search using top 3 keywords
+        search_terms = keywords[:3] if len(keywords) >= 3 else [research_topic]
+
+        for i, keyword in enumerate(search_terms, 1):
+            print(f"\n📚 Search {i}/{len(search_terms)}: '{keyword}'")
+
+            # arXiv search only
+            print("   🔎 Searching arXiv...")
+            arxiv_papers = _search_arxiv_internal(
+                query=keyword,
+                max_results=15,  # Increased from 10 since we're only using arXiv
+                date_from="2018-01-01"
+            )
+            print(f"      Found {len(arxiv_papers)} papers")
+            all_papers.extend(arxiv_papers)
+
+        # Deduplicate papers
+        print(f"\n🔄 Deduplicating {len(all_papers)} total papers...")
+        unique_papers = _deduplicate_papers(all_papers)
+
+        # Sort by relevance (citations + recency)
+        unique_papers.sort(
+            key=lambda x: (
+                x.get("citations", 0),
+                x.get("year", 0),
+                x.get("relevance_score", 0)
+            ),
+            reverse=True
         )
-        
-        # Format papers for LLM context
-        literature_context = neo4j_search.format_papers_for_llm(papers)
-        
-        print(f"✅ Retrieved {len(papers)} relevant papers from database")
-        
+
+        # Extract topics from papers
+        print(f"\n🏷️  Extracting topics from {len(unique_papers)} papers...")
+        topics = await extract_topics_from_papers(unique_papers[:20])  # Use top 20 for topic extraction
+
+        # Cluster papers by topic
+        print(f"📊 Clustering papers into {len(topics)} topics...")
+        topic_papers = cluster_papers_by_topic(unique_papers, topics)
+
+        # Format for LLM context
+        literature_context = format_papers_for_llm(unique_papers[:15])  # Use top 15 for context
+
+        print(f"\n✅ Broad search complete:")
+        print(f"   • {len(unique_papers)} unique papers found")
+        print(f"   • {len(topics)} topics identified: {', '.join(topics[:5])}")
+        print(f"   • Papers per topic: {', '.join([f'{t}: {len(topic_papers[t])}' for t in topics[:3]])}")
+        print("="*70)
+
         return {
-            "retrieved_papers": papers,
-            "literature_context": literature_context
+            "broad_papers": unique_papers,
+            "topics": topics,
+            "topic_papers": topic_papers,
+            "literature_context": literature_context,
+            "retrieved_papers": unique_papers  # Backward compatibility
         }
-        
+
     except Exception as e:
-        print(f"⚠️  Error retrieving literature: {e}")
+        print(f"\n⚠️  Error in broad literature search: {e}")
+        import traceback
+        traceback.print_exc()
         return {
-            "retrieved_papers": [],
-            "literature_context": "Literature database unavailable."
+            "broad_papers": [],
+            "topics": [],
+            "topic_papers": {},
+            "literature_context": "Literature search unavailable. Please check arXiv installation.",
+            "retrieved_papers": []
         }
+
+
+async def extract_topics_from_papers(papers: List[Dict]) -> List[str]:
+    """
+    Extract main topics from paper titles and abstracts using LLM.
+
+    Args:
+        papers: List of paper dictionaries
+
+    Returns:
+        List of 3-5 topic strings
+    """
+    if not papers:
+        return []
+
+    # Prepare paper summaries
+    paper_summaries = []
+    for i, paper in enumerate(papers[:20], 1):  # Use top 20 papers
+        title = paper.get("title", "")
+        abstract = paper.get("abstract", "")[:200]  # First 200 chars
+        paper_summaries.append(f"{i}. {title}\n   Abstract: {abstract}...")
+
+    papers_text = "\n\n".join(paper_summaries)
+
+    # Ask LLM to extract topics
+    prompt = f"""Based on these academic papers, identify 3-5 main research topics or themes.
+
+Papers:
+{papers_text}
+
+Provide 3-5 concise topic names (each 3-6 words) that capture the main themes.
+Format: Return ONLY a comma-separated list of topics, nothing else.
+
+Example: "Transfer learning methods, Medical image classification, Few-shot learning approaches"
+"""
+
+    try:
+        response = await writer_model.ainvoke([HumanMessage(content=prompt)])
+        topics_text = response.content.strip()
+
+        # Parse topics
+        topics = [t.strip() for t in topics_text.split(",")]
+        topics = [t for t in topics if t]  # Remove empty
+
+        # Limit to 5 topics
+        return topics[:5]
+
+    except Exception as e:
+        print(f"   ⚠️ Error extracting topics: {e}")
+        # Fallback: use keywords
+        return state.get('research_keywords', [])[:3]
+
+
+def cluster_papers_by_topic(papers: List[Dict], topics: List[str]) -> Dict[str, List[Dict]]:
+    """
+    Cluster papers by topic using simple keyword matching.
+
+    Args:
+        papers: List of paper dictionaries
+        topics: List of topic strings
+
+    Returns:
+        Dictionary mapping topic -> list of papers
+    """
+    topic_papers = {topic: [] for topic in topics}
+
+    for paper in papers:
+        title = paper.get("title", "").lower()
+        abstract = paper.get("abstract", "").lower()
+        paper_text = f"{title} {abstract}"
+
+        # Find best matching topic
+        best_topic = None
+        best_score = 0
+
+        for topic in topics:
+            # Count keyword matches
+            topic_keywords = topic.lower().split()
+            score = sum(1 for kw in topic_keywords if kw in paper_text)
+
+            if score > best_score:
+                best_score = score
+                best_topic = topic
+
+        # Assign to best topic (or first topic if no match)
+        if best_topic and best_score > 0:
+            topic_papers[best_topic].append(paper)
+        else:
+            # Assign to first topic as fallback
+            topic_papers[topics[0]].append(paper)
+
+    return topic_papers
+
+
+def format_papers_for_llm(papers: List[Dict]) -> str:
+    """
+    Format papers for LLM context (similar to Neo4j format).
+
+    Args:
+        papers: List of paper dictionaries
+
+    Returns:
+        Formatted string for LLM prompt
+    """
+    if not papers:
+        return "No relevant papers found in literature search."
+
+    formatted = f"## Retrieved Literature ({len(papers)} papers from Google Scholar + arXiv):\n\n"
+
+    for i, paper in enumerate(papers, 1):
+        formatted += f"**[{i}] {paper.get('title', 'Untitled')}**\n"
+
+        # Authors
+        authors = paper.get('authors', [])
+        if authors:
+            author_str = ', '.join(authors[:3])
+            if len(authors) > 3:
+                author_str += f" et al. ({len(authors)} authors)"
+            formatted += f"   Authors: {author_str}\n"
+
+        # Year and venue
+        year = paper.get('year', 'Unknown')
+        venue = paper.get('venue', 'Unknown venue')
+        formatted += f"   Year: {year} | Venue: {venue}\n"
+
+        # Citations
+        citations = paper.get('citations', 0)
+        if citations:
+            formatted += f"   Citations: {citations}\n"
+
+        # Abstract (truncated)
+        abstract = paper.get('abstract', 'No abstract available')
+        if len(abstract) > 300:
+            abstract = abstract[:300] + "..."
+        formatted += f"   Abstract: {abstract}\n"
+
+        # URL
+        url = paper.get('url', '')
+        if url:
+            formatted += f"   URL: {url}\n"
+
+        # PDF URL (if arXiv)
+        pdf_url = paper.get('pdf_url', '')
+        if pdf_url:
+            formatted += f"   PDF: {pdf_url}\n"
+
+        formatted += "\n"
+
+    return formatted
+
+def save_artifacts(state: AgentState) -> dict:
+    """
+    Save conversation artifacts to disk.
+
+    This node persists artifacts from the supervisor to the session directory
+    so they can be accessed later for dialogue or review.
+
+    NEW: Uses unified format - updates existing character entries with research artifacts
+    """
+    from llmkglitrev.characters.artifact import UnifiedCharacterManager, ConversationArtifact
+
+    session_id = state.get("session_id", "")
+    conversation_artifacts = state.get("conversation_artifacts", [])
+
+    if not session_id:
+        print("\n⚠️  Warning: No session ID found, artifacts not saved")
+        return {}
+
+    if not conversation_artifacts:
+        print("\n⚠️  Warning: No conversation artifacts to save")
+        return {}
+
+    # Initialize unified manager
+    unified_manager = UnifiedCharacterManager()
+
+    print(f"\n💾 Saving {len(conversation_artifacts)} artifacts to sessions/{session_id}/")
+
+    # Update each character with its research artifact
+    saved_count = 0
+    for artifact_dict in conversation_artifacts:
+        try:
+            # Convert dict back to ConversationArtifact
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+
+            # Update existing character entry with artifact
+            unified_manager.update_artifact(
+                session_id=session_id,
+                character_id=artifact.character_id,
+                artifact=artifact
+            )
+            saved_count += 1
+
+            print(f"  ✅ Updated {artifact.character_id} with research artifact")
+
+        except Exception as e:
+            print(f"  ❌ Error saving artifact for {artifact_dict.get('character_id', 'unknown')}: {e}")
+
+    print(f"✅ Saved {saved_count}/{len(conversation_artifacts)} artifacts\n")
+
+    return {}  # No state changes needed
+
 
 async def final_research_proposal(state:AgentState | SupervisorState):
     """
-    Final research proposal.
+    Supervisor Synthesis: Create Unified Research Proposal (Phase 4)
 
-    Synthesizes all literature and propositions from sub-agents 
+    This is where the supervisor synthesizes insights from ALL character agents
+    into a single, coherent research proposal. This is YOUR proposal to present.
+
+    Process:
+    1. Collect all research findings from character agents (via artifacts)
+    2. Synthesize into unified narrative
+    3. Create comprehensive research proposal
+    4. Save proposal to state
+
+    IMPORTANT: After this step, artifacts are already saved. Characters in Phase 5-7
+    will LOAD these artifacts (not do new research) for dialogue and validation.
+
+    Args:
+        state: Contains research_proposals, raw_notes, and conversation_artifacts
+
+    Returns:
+        final_proposal: Unified research proposal synthesized from all agents
     """
     proposals = state.get("research_proposals", [])
-
     notes = state.get("raw_notes", [])
+    conversation_artifacts = state.get("conversation_artifacts", [])
 
+    print("\n" + "="*70)
+    print("🎓 PHASE 4: SUPERVISOR SYNTHESIS")
+    print("="*70)
+    print(f"\n📊 Synthesizing insights from {len(conversation_artifacts)} character agents")
+    print(f"   • Research proposals: {len(proposals)}")
+    print(f"   • Raw notes: {len(notes)}")
+
+    # Combine all findings
     findings = "\n".join(proposals)
 
+    # Generate unified proposal
+    print("\n✍️  Creating unified research proposal...")
     final_research_proposal_prompt = plan_research_full_agent.format(
         research_topic=state.get("research_topic", ""),
         findings=findings,
@@ -105,29 +394,480 @@ async def final_research_proposal(state:AgentState | SupervisorState):
     )
     final_proposal = await writer_model.ainvoke([HumanMessage(content=final_research_proposal_prompt)])
 
+    print(f"\n✅ Unified research proposal created ({len(final_proposal.content)} characters)")
+    print("="*70)
+    print("\n📝 This proposal will now be used for:")
+    print("   • Phase 5: Socratic dialogue (characters ask critical questions)")
+    print("   • Phase 6: Cross-domain validation (identify knowledge gaps)")
+    print("   • Phase 7: Industry partner review (optional)")
+    print("="*70)
+
     return {
-        "final_proposal": final_proposal.content, 
+        "final_proposal": final_proposal.content,
         "messages": ["Here is the final proposal: " + final_proposal.content],
     }
 from langgraph.checkpoint.memory import MemorySaver
 
+
+def route_after_plan_approval(state: AgentState) -> str:
+    """
+    Route to supervisor if plan is approved, otherwise loop back to propose_research_plan.
+    """
+    if state.get("plan_approved", False):
+        return "instantiate_agents"
+    else:
+        # Plan was rejected or needs modification - re-propose
+        return "propose_research_plan"
+
+
+def instantiate_agents(state: AgentState) -> dict:
+    """
+    Instantiate character-based agents from the approved research plan.
+
+    This converts the approved plan into actual character configurations
+    that the supervisor can use to spawn agents.
+
+    NEW: Uses unified character format - saves characters to sessions/{session_id}/conversations/
+    """
+    from llmkglitrev.characters import ResearchCharacter
+    from llmkglitrev.characters.artifact import UnifiedCharacterManager
+    from llmkglitrev.characters.system_templates import get_system_template, SYSTEM_TEMPLATES
+
+    print("\n" + "="*70)
+    print("🎭 INSTANTIATING RESEARCH AGENTS")
+    print("="*70)
+
+    character_configs = state.get("character_configs", [])
+    session_id = state.get("session_id")
+    unified_manager = UnifiedCharacterManager()
+
+    active_characters = []
+
+    for config in character_configs:
+        char_id = config.get("character_id")
+        domain = config.get("domain")
+        stance = config.get("stance", "neutral")
+        assigned_topic = config.get("assigned_topic", "")
+        seed_papers = config.get("seed_papers", [])
+
+        print(f"\n📌 Configuring agent for {domain} ({stance})")
+        if assigned_topic:
+            print(f"   🎯 Assigned topic: {assigned_topic}")
+            print(f"   📄 Seed papers: {len(seed_papers)}")
+
+        if char_id != "custom":
+            # Load from system templates (Python constants)
+            try:
+                character = get_system_template(char_id)
+                print(f"   ✅ Loaded system template: {character.name}")
+            except KeyError:
+                print(f"   ⚠️  Template {char_id} not found, using fallback")
+                # Create a basic character if template not found
+                character = ResearchCharacter(
+                    character_id=f"agent_{domain.lower().replace(' ', '_')}",
+                    name=f"{domain} Expert",
+                    domain=domain,
+                    stance=stance,
+                    system_prompt_template=f"You are a {domain} expert with a {stance} perspective.",
+                    sub_domains=[domain],
+                    communication_style="academic"
+                )
+        else:
+            # Create custom character from config
+            custom_config = config.get("custom_config", {})
+            character = ResearchCharacter(
+                character_id=custom_config.get("character_id", f"custom_{domain.lower().replace(' ', '_')}"),
+                name=custom_config.get("name", f"{domain} Expert"),
+                domain=domain,
+                stance=stance,
+                system_prompt_template=custom_config.get("system_prompt", ""),
+                sub_domains=custom_config.get("sub_domains", [domain]),
+                communication_style=custom_config.get("communication_style", "academic")
+            )
+            print(f"   ✅ Created custom character: {character.name}")
+
+        # Save character to session (artifact=None since research hasn't started yet)
+        unified_manager.save_character(
+            session_id=session_id,
+            character=character,
+            artifact=None  # No artifact yet - will be added after research
+        )
+        print(f"   💾 Saved to sessions/{session_id}/conversations/{character.character_id}.json")
+
+        # Add to active characters list with topic and seed papers
+        character_dict = character.model_dump()
+        character_dict["assigned_topic"] = assigned_topic
+        character_dict["seed_papers"] = seed_papers
+        active_characters.append(character_dict)
+
+    print(f"\n✅ Instantiated {len(active_characters)} research agents")
+    print("="*70)
+
+    return {
+        "active_characters": active_characters
+    }
+
+
+#  ===== PHASE 5-7: GAP IDENTIFICATION, SOCRATIC DIALOGUE, INDUSTRY REVIEW =====
+
+async def identify_research_gaps(state: AgentState) -> dict:
+    """Phase 5: Identify research gaps from ontology exploration.
+
+    Characters explore their own ontologies to:
+    1. Find research gaps in the unified proposal
+    2. Suggest new research ideas from different perspectives
+    3. Present gaps for user validation
+
+    Artifacts are loaded from sessions/{session_id}/conversations/
+    """
+    session_id = state.get("session_id")
+    final_proposal = state.get("final_proposal", "")
+    conversation_artifacts = state.get("conversation_artifacts", [])
+
+    print(f"\n{'='*70}")
+    print(f"PHASE 5: RESEARCH GAP IDENTIFICATION")
+    print(f"{'='*70}")
+    print(f"Session ID: {session_id}")
+    print(f"Loading character artifacts from disk...")
+    print(f"Characters will explore their own ontologies to find research gaps")
+    print(f"{'='*70}\n")
+
+    # Load artifacts from disk
+    from llmkglitrev.characters.artifact import ConversationArtifactManager, ConversationArtifact
+    from llmkglitrev.characters import CharacterManager
+    from llmkglitrev.agents.character_agent import CharacterBasedResearchAgent
+    from langchain_core.messages import HumanMessage
+
+    artifact_manager = ConversationArtifactManager()
+    loaded_artifacts = artifact_manager.load_artifacts(session_id)
+
+    if not loaded_artifacts:
+        print("⚠️  No artifacts found on disk! Using in-memory artifacts...")
+        loaded_artifacts = []
+        for artifact_dict in conversation_artifacts:
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+            loaded_artifacts.append(artifact)
+
+    print(f"✓ Loaded {len(loaded_artifacts)} artifacts")
+
+    # For each character, identify gaps using THEIR OWN ontology
+    manager = CharacterManager()
+    identified_gaps = []
+
+    for artifact in loaded_artifacts:
+        character = manager.load_character(artifact.character_id)
+
+        # Create agent with artifact
+        agent = CharacterBasedResearchAgent(
+            character=character,
+            session_id=session_id,
+            literature_subset=[]
+        )
+        agent.artifact = artifact
+
+        print(f"🔍 {character.name} exploring ontology for gaps...")
+
+        # Use ontology to identify gaps
+        gap_identification_prompt = f"""
+Review the unified research proposal and your research findings.
+
+Using YOUR domain ontology, identify:
+1. Research gaps - what's missing or unexplored
+2. Alternative perspectives - different ways to approach this
+3. New research ideas - extensions or related questions
+
+Unified Proposal:
+{final_proposal}
+
+Your Research:
+{artifact.research_output[:2000]}...  # Truncate for context
+
+For each gap, provide:
+- Gap description
+- Why it's important (from YOUR ontology perspective)
+- Suggested research direction
+- Feasibility assessment
+"""
+
+        # Get LLM response
+        response = await agent.agent_executor.ainvoke({
+            "messages": [HumanMessage(content=gap_identification_prompt)]
+        })
+
+        gap_text = response["messages"][-1].content
+
+        identified_gaps.append({
+            "character_id": artifact.character_id,
+            "character_name": character.name,
+            "domain": artifact.domain,
+            "gaps_identified": gap_text,
+            "ontology_used": "own"  # Using own ontology
+        })
+
+        print(f"✓ {character.name} identified gaps\n")
+
+    print(f"\n✅ Gap identification complete!")
+    print(f"Identified gaps from {len(identified_gaps)} characters\n")
+
+    return {
+        "identified_gaps": identified_gaps,
+        "gap_identification_complete": True
+    }
+
+
+async def run_socratic_dialogue(state: AgentState) -> dict:
+    """Phase 6: Socratic dialogue using own ontology perspectives.
+
+    Characters ask critical questions using their own ontology for presentation prep.
+    Uses existing dialogue_coordinator infrastructure.
+    """
+    session_id = state.get("session_id")
+
+    print(f"\n{'='*70}")
+    print(f"PHASE 6: SOCRATIC DIALOGUE")
+    print(f"{'='*70}")
+    print(f"Session ID: {session_id}")
+    print(f"Characters will ask critical questions using their own ontologies")
+    print(f"{'='*70}\n")
+
+    # Load artifacts (same as Phase 5)
+    from llmkglitrev.characters.artifact import ConversationArtifactManager
+
+    artifact_manager = ConversationArtifactManager()
+    loaded_artifacts = artifact_manager.load_artifacts(session_id)
+
+    if not loaded_artifacts:
+        print("⚠️  No artifacts found! Using in-memory artifacts...")
+        conversation_artifacts = state.get("conversation_artifacts", [])
+        from llmkglitrev.characters.artifact import ConversationArtifact
+        loaded_artifacts = []
+        for artifact_dict in conversation_artifacts:
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+            loaded_artifacts.append(artifact)
+
+    print(f"✓ Loaded {len(loaded_artifacts)} artifacts")
+
+    # Use dialogue_coordinator (existing code)
+    from llmkglitrev.agents.dialogue_coordinator import create_dialogue_coordinator
+
+    coordinator = create_dialogue_coordinator(min_priority=7)
+
+    dialogue_state = {
+        "session_id": session_id,
+        "conversation_artifacts": [a.model_dump() for a in loaded_artifacts],
+        "pending_notes": [],
+        "current_note": None,
+        "dialogue_history": [],
+        "current_question": "",
+        "current_answer": "",
+        "waiting_for_feedback": False,
+        "dialogue_complete": False,
+        "user_requested_stop": False,
+        "min_priority": 7
+    }
+
+    config = {"configurable": {"thread_id": f"dialogue-{session_id}"}}
+
+    # Run dialogue with interrupts for user feedback
+    print("Starting Socratic dialogue coordinator...")
+    async for event in coordinator.astream(dialogue_state, config=config):
+        # Just track progress, actual interaction happens in Streamlit via interrupts
+        pass
+
+    # Get final state
+    final_state = coordinator.get_state(config)
+    dialogue_history = final_state.values.get("dialogue_history", [])
+
+    print(f"\n✅ Socratic dialogue complete!")
+    print(f"Recorded {len(dialogue_history)} question-answer exchanges\n")
+
+    return {
+        "dialogue_history": dialogue_history,
+        "dialogue_complete": True
+    }
+
+
+async def industry_partner_review(state: AgentState) -> dict:
+    """Phase 7: Industry partners review using OTHER researchers' ontologies.
+
+    Industrial partners ask operational questions about:
+    - Project alignment and objectives
+    - Implementation steps and resources
+    - Practical feasibility and risks
+
+    Key difference: Partners review using OTHER researchers' ontologies (not their own).
+    """
+    session_id = state.get("session_id")
+    final_proposal = state.get("final_proposal", "")
+
+    print(f"\n{'='*70}")
+    print(f"PHASE 7: INDUSTRY PARTNER REVIEW")
+    print(f"{'='*70}")
+    print(f"Session ID: {session_id}")
+    print(f"Industry partners will review using OTHER researchers' ontologies")
+    print(f"{'='*70}\n")
+
+    # Load artifacts
+    from llmkglitrev.characters.artifact import ConversationArtifactManager
+
+    artifact_manager = ConversationArtifactManager()
+    loaded_artifacts = artifact_manager.load_artifacts(session_id)
+
+    if not loaded_artifacts:
+        print("⚠️  No artifacts found! Using in-memory artifacts...")
+        conversation_artifacts = state.get("conversation_artifacts", [])
+        from llmkglitrev.characters.artifact import ConversationArtifact
+        loaded_artifacts = []
+        for artifact_dict in conversation_artifacts:
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+            loaded_artifacts.append(artifact)
+
+    print(f"✓ Loaded {len(loaded_artifacts)} artifacts")
+
+    # Create industry partner personas
+    industry_partners = [
+        {
+            "name": "Project Manager",
+            "focus": "Project alignment, timelines, deliverables",
+            "ontology_perspective": "operational"
+        },
+        {
+            "name": "Technical Lead",
+            "focus": "Implementation steps, technical feasibility",
+            "ontology_perspective": "technical"
+        },
+        {
+            "name": "Stakeholder",
+            "focus": "ROI, impact, resource allocation",
+            "ontology_perspective": "business"
+        }
+    ]
+
+    industry_feedback = []
+
+    # Use LLM to generate feedback from each partner
+    from langchain.chat_models import init_chat_model
+    from langchain_core.messages import HumanMessage
+
+    review_model = init_chat_model(model="deepseek:deepseek-chat")
+
+    for partner in industry_partners:
+        print(f"👔 {partner['name']} reviewing...")
+
+        # Partner reviews using OTHER researchers' ontologies
+        ontology_list = "\n".join([
+            f"- {a.character_id} ({a.domain}): {a.research_output[:500]}..."
+            for a in loaded_artifacts
+        ])
+
+        prompt = f"""
+You are a {partner['name']} reviewing this research proposal.
+
+IMPORTANT: Review using the ontologies and perspectives of these researchers:
+{ontology_list}
+
+Proposal:
+{final_proposal[:2000]}...
+
+From your {partner['focus']} perspective, ask operational questions about:
+- How does this align with project objectives?
+- What are the implementation steps?
+- What resources are needed?
+- What are the risks and mitigations?
+- What is the timeline for deliverables?
+
+Provide specific, actionable feedback focused on practical feasibility.
+"""
+
+        response = await review_model.ainvoke([HumanMessage(content=prompt)])
+
+        industry_feedback.append({
+            "partner_name": partner['name'],
+            "focus_area": partner['focus'],
+            "ontologies_reviewed": [a.character_id for a in loaded_artifacts],
+            "feedback": response.content
+        })
+
+        print(f"✓ {partner['name']} review complete\n")
+
+    print(f"\n✅ Industry partner review complete!")
+    print(f"Collected feedback from {len(industry_feedback)} partners\n")
+
+    return {
+        "industry_feedback": industry_feedback,
+        "industry_review_complete": True
+    }
+
+
+# ===== GRAPH CONSTRUCTION =====
+
 supervisor_agent = create_interactive_supervisor()
 agent_builder = StateGraph(AgentState, input_schema=AgentInputState)
+
+# Add nodes
 agent_builder.add_node("format_question", format_question)
-agent_builder.add_node("retrieve_literature", retrieve_literature)  # NEW: Literature retrieval
+agent_builder.add_node("broad_literature_search", broad_literature_search)
+agent_builder.add_node("propose_research_plan", propose_research_plan)  # NEW: Propose agents
+agent_builder.add_node("process_plan_approval", process_plan_approval)  # NEW: Process approval
+agent_builder.add_node("instantiate_agents", instantiate_agents)  # NEW: Create character agents
 agent_builder.add_node("supervisor_subgraph", supervisor_agent)
+agent_builder.add_node("save_artifacts", save_artifacts)  # NEW: Save artifacts to disk
 agent_builder.add_node("final_research_proposal", final_research_proposal)
+agent_builder.add_node("identify_research_gaps", identify_research_gaps)  # PHASE 5
+agent_builder.add_node("run_socratic_dialogue", run_socratic_dialogue)  # PHASE 6
+agent_builder.add_node("industry_partner_review", industry_partner_review)  # PHASE 7
 
-
+# Add edges - NEW WORKFLOW:
+# 1. Format question and extract keywords
 agent_builder.add_edge(START, "format_question")
-agent_builder.add_edge("format_question", "retrieve_literature")  # NEW: Retrieve before supervisor
-agent_builder.add_edge("retrieve_literature", "supervisor_subgraph")  # NEW: Pass context to supervisor
-agent_builder.add_edge("supervisor_subgraph", "final_research_proposal")
+
+# 2. Broad literature search (replaces Neo4j)
+agent_builder.add_edge("format_question", "broad_literature_search")
+
+# 3. Propose research plan with interrupt for approval
+agent_builder.add_edge("broad_literature_search", "propose_research_plan")
+
+# 4. Process approval (runs after interrupt is resumed)
+agent_builder.add_edge("propose_research_plan", "process_plan_approval")
+
+# 5. Route based on approval: instantiate agents or re-propose
+agent_builder.add_conditional_edges(
+    "process_plan_approval",
+    route_after_plan_approval,
+    {
+        "instantiate_agents": "instantiate_agents",
+        "propose_research_plan": "propose_research_plan"
+    }
+)
+
+# 6. Run supervisor with instantiated agents
+agent_builder.add_edge("instantiate_agents", "supervisor_subgraph")
+
+# 7. Save conversation artifacts to disk
+agent_builder.add_edge("supervisor_subgraph", "save_artifacts")
+
+# 8. Generate final proposal
+agent_builder.add_edge("save_artifacts", "final_research_proposal")
+
+# 9. End (Phases 1-4 complete)
 agent_builder.add_edge("final_research_proposal", END)
 
+# NOTE: Phases 5-7 nodes are defined above but not connected to the main workflow yet.
+# They will be triggered manually from the Streamlit UI tabs.
+# To enable automatic execution, uncomment these edges:
+#
+# agent_builder.add_edge("final_research_proposal", "identify_research_gaps")  # Phase 5
+# agent_builder.add_edge("identify_research_gaps", "run_socratic_dialogue")  # Phase 6
+# agent_builder.add_edge("run_socratic_dialogue", "industry_partner_review")  # Phase 7
+# agent_builder.add_edge("industry_partner_review", END)
+
 # Compile with MemorySaver checkpointer to support interrupts
+# Configure to interrupt BEFORE process_plan_approval for user approval
 checkpointer = MemorySaver()
-proposal_generator_agent = agent_builder.compile(checkpointer=checkpointer)
+proposal_generator_agent = agent_builder.compile(
+    checkpointer=checkpointer,
+    interrupt_before=["process_plan_approval"]
+)
 
 # Import interactive runner for standalone usage
 from llmkglitrev.agents.interactive_runner import (

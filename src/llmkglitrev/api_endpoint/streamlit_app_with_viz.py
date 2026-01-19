@@ -151,7 +151,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Clear chat button
-    if st.button("🗑️ Clear Chat History", use_container_width=True):
+    if st.button("🗑️ Clear Chat History", width='stretch'):
         st.session_state.messages = []
         st.rerun()
     
@@ -190,7 +190,7 @@ if show_graph:
     with st.expander("🔍 View Knowledge Graph", expanded=True):
         G = create_sample_knowledge_graph()
         fig = plot_knowledge_graph(G)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         st.info("💡 This is a sample graph. Connect your actual knowledge graph data here!")
 
@@ -209,17 +209,17 @@ if len(st.session_state.messages) == 0:
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("What makes a good research idea?", use_container_width=True):
+        if st.button("What makes a good research idea?", width='stretch'):
             st.session_state.example_prompt = "What makes a good research idea?"
             st.rerun()
     
     with col2:
-        if st.button("Evaluate: Using LLMs for literature review", use_container_width=True):
+        if st.button("Evaluate: Using LLMs for literature review", width='stretch'):
             st.session_state.example_prompt = "Can you evaluate this research idea: Using LLMs to automate literature reviews and knowledge graph construction"
             st.rerun()
     
     with col3:
-        if st.button("Key criteria for research novelty?", use_container_width=True):
+        if st.button("Key criteria for research novelty?", width='stretch'):
             st.session_state.example_prompt = "What are the key criteria for evaluating research novelty?"
             st.rerun()
 

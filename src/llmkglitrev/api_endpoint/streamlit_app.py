@@ -45,7 +45,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Clear chat button
-    if st.button("🗑️ Clear Chat History", use_container_width=True):
+    if st.button("🗑️ Clear Chat History", width='stretch'):
         st.session_state.messages = []
         st.rerun()
     
@@ -244,7 +244,7 @@ if st.session_state.waiting_for_feedback and st.session_state.interrupt_data:
         
         col1, col2 = st.columns([1, 5])
         with col1:
-            if st.button("✅ Submit Feedback", use_container_width=True):
+            if st.button("✅ Submit Feedback", width='stretch'):
                 if feedback.strip():
                     # Resume research with feedback
                     with st.spinner("Processing your feedback and continuing research..."):
@@ -273,7 +273,7 @@ if st.session_state.waiting_for_feedback and st.session_state.interrupt_data:
                     st.warning("Please provide feedback before submitting.")
         
         with col2:
-            if st.button("🔄 Approve All", use_container_width=True):
+            if st.button("🔄 Approve All", width='stretch'):
                 # Auto-approve
                 with st.spinner("Approving and continuing research..."):
                     result = resume_research(st.session_state.thread_id, "Approved. Proceed with all proposed research directions.")
@@ -304,17 +304,17 @@ if len(st.session_state.messages) == 0:
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("LLMs for Literature Review", use_container_width=True):
+        if st.button("LLMs for Literature Review", width='stretch'):
             st.session_state.example_prompt = "How can Large Language Models improve literature review processes and knowledge graph construction?"
             st.rerun()
     
     with col2:
-        if st.button("AI in Healthcare", use_container_width=True):
+        if st.button("AI in Healthcare", width='stretch'):
             st.session_state.example_prompt = "Using AI and machine learning to improve early disease detection in medical imaging"
             st.rerun()
     
     with col3:
-        if st.button("Climate Change Mitigation", use_container_width=True):
+        if st.button("Climate Change Mitigation", width='stretch'):
             st.session_state.example_prompt = "Novel approaches to carbon capture and storage using machine learning optimization"
             st.rerun()
 
