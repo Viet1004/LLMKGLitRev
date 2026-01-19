@@ -61,4 +61,14 @@ sample_2 = """
 
     He wants to collaborate and do research on anomaly detection in mobile traffic 
     Please propose a research idea that suits his past research and match with the topic he want to contributes to 
+    Please propose potential research venue for the research proposal based on the maturity of the research.
     """
+
+sample_3 = """
+    I'm a computer science Ph.D. studen who has some experience with Natural Language Processing and Large Language model. 
+    I would like to do a research in LLMs for scientific discovery. 
+    For this topic, I also want to explore from information system point of view because it might concerns
+    the sociotechnical aspect of automation in research discovery such as quality of research, authenticity of research,...
+    Please propose concrete research propoal for this idea, especially multidisciplinary research.
+    Please also suggest potential research venue for the research proposal based on the maturity of the research. 
+"""

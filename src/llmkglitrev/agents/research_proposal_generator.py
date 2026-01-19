@@ -302,8 +302,10 @@ def save_artifacts(state: AgentState) -> dict:
 
     This node persists artifacts from the supervisor to the session directory
     so they can be accessed later for dialogue or review.
+
+    NEW: Uses unified format - updates existing character entries with research artifacts
     """
-    from llmkglitrev.characters import ConversationArtifactManager, ConversationArtifact
+    from llmkglitrev.characters.artifact import UnifiedCharacterManager, ConversationArtifact
 
     session_id = state.get("session_id", "")
     conversation_artifacts = state.get("conversation_artifacts", [])
@@ -316,26 +318,30 @@ def save_artifacts(state: AgentState) -> dict:
         print("\n⚠️  Warning: No conversation artifacts to save")
         return {}
 
-    # Initialize artifact manager
-    artifact_manager = ConversationArtifactManager()
+    # Initialize unified manager
+    unified_manager = UnifiedCharacterManager()
 
     print(f"\n💾 Saving {len(conversation_artifacts)} artifacts to sessions/{session_id}/")
 
-    # Save each artifact
+    # Update each character with its research artifact
     saved_count = 0
     for artifact_dict in conversation_artifacts:
         try:
             # Convert dict back to ConversationArtifact
             artifact = ConversationArtifact.model_validate(artifact_dict)
 
-            # Save to disk
-            artifact_manager.save_artifact(session_id, artifact)
+            # Update existing character entry with artifact
+            unified_manager.update_artifact(
+                session_id=session_id,
+                character_id=artifact.character_id,
+                artifact=artifact
+            )
             saved_count += 1
 
-            print(f"  ✅ Saved artifact for {artifact.domain} ({artifact.character_id})")
+            print(f"  ✅ Updated {artifact.character_id} with research artifact")
 
         except Exception as e:
-            print(f"  ❌ Error saving artifact: {e}")
+            print(f"  ❌ Error saving artifact for {artifact_dict.get('character_id', 'unknown')}: {e}")
 
     print(f"✅ Saved {saved_count}/{len(conversation_artifacts)} artifacts\n")
 
@@ -420,15 +426,20 @@ def instantiate_agents(state: AgentState) -> dict:
 
     This converts the approved plan into actual character configurations
     that the supervisor can use to spawn agents.
+
+    NEW: Uses unified character format - saves characters to sessions/{session_id}/conversations/
     """
-    from llmkglitrev.characters import CharacterManager, ResearchCharacter
+    from llmkglitrev.characters import ResearchCharacter
+    from llmkglitrev.characters.artifact import UnifiedCharacterManager
+    from llmkglitrev.characters.system_templates import get_system_template, SYSTEM_TEMPLATES
 
     print("\n" + "="*70)
     print("🎭 INSTANTIATING RESEARCH AGENTS")
     print("="*70)
 
     character_configs = state.get("character_configs", [])
-    char_manager = CharacterManager()
+    session_id = state.get("session_id")
+    unified_manager = UnifiedCharacterManager()
 
     active_characters = []
 
@@ -445,40 +456,48 @@ def instantiate_agents(state: AgentState) -> dict:
             print(f"   📄 Seed papers: {len(seed_papers)}")
 
         if char_id != "custom":
-            # Load existing character template
+            # Load from system templates (Python constants)
             try:
-                character = char_manager.load_character(char_id)
-                print(f"   ✅ Loaded template: {character.name}")
-            except Exception as e:
-                print(f"   ⚠️  Failed to load {char_id}, using fallback")
-                # Create a basic character if template fails
+                character = get_system_template(char_id)
+                print(f"   ✅ Loaded system template: {character.name}")
+            except KeyError:
+                print(f"   ⚠️  Template {char_id} not found, using fallback")
+                # Create a basic character if template not found
                 character = ResearchCharacter(
                     character_id=f"agent_{domain.lower().replace(' ', '_')}",
                     name=f"{domain} Expert",
                     domain=domain,
                     stance=stance,
                     system_prompt_template=f"You are a {domain} expert with a {stance} perspective.",
-                    expertise_areas=[domain],
-                    research_style=stance
+                    sub_domains=[domain],
+                    communication_style="academic"
                 )
         else:
             # Create custom character from config
             custom_config = config.get("custom_config", {})
             character = ResearchCharacter(
-                character_id=custom_config.get("character_id", f"custom_{domain.lower()}"),
+                character_id=custom_config.get("character_id", f"custom_{domain.lower().replace(' ', '_')}"),
                 name=custom_config.get("name", f"{domain} Expert"),
                 domain=domain,
                 stance=stance,
                 system_prompt_template=custom_config.get("system_prompt", ""),
-                expertise_areas=custom_config.get("expertise_areas", [domain]),
-                research_style=custom_config.get("research_style", stance)
+                sub_domains=custom_config.get("sub_domains", [domain]),
+                communication_style=custom_config.get("communication_style", "academic")
             )
             print(f"   ✅ Created custom character: {character.name}")
 
+        # Save character to session (artifact=None since research hasn't started yet)
+        unified_manager.save_character(
+            session_id=session_id,
+            character=character,
+            artifact=None  # No artifact yet - will be added after research
+        )
+        print(f"   💾 Saved to sessions/{session_id}/conversations/{character.character_id}.json")
+
         # Add to active characters list with topic and seed papers
         character_dict = character.model_dump()
-        character_dict["assigned_topic"] = assigned_topic  # NEW: Topic from broad search
-        character_dict["seed_papers"] = seed_papers  # NEW: Seed papers for deep research
+        character_dict["assigned_topic"] = assigned_topic
+        character_dict["seed_papers"] = seed_papers
         active_characters.append(character_dict)
 
     print(f"\n✅ Instantiated {len(active_characters)} research agents")
@@ -488,6 +507,299 @@ def instantiate_agents(state: AgentState) -> dict:
         "active_characters": active_characters
     }
 
+
+#  ===== PHASE 5-7: GAP IDENTIFICATION, SOCRATIC DIALOGUE, INDUSTRY REVIEW =====
+
+async def identify_research_gaps(state: AgentState) -> dict:
+    """Phase 5: Identify research gaps from ontology exploration.
+
+    Characters explore their own ontologies to:
+    1. Find research gaps in the unified proposal
+    2. Suggest new research ideas from different perspectives
+    3. Present gaps for user validation
+
+    Artifacts are loaded from sessions/{session_id}/conversations/
+    """
+    session_id = state.get("session_id")
+    final_proposal = state.get("final_proposal", "")
+    conversation_artifacts = state.get("conversation_artifacts", [])
+
+    print(f"\n{'='*70}")
+    print(f"PHASE 5: RESEARCH GAP IDENTIFICATION")
+    print(f"{'='*70}")
+    print(f"Session ID: {session_id}")
+    print(f"Loading character artifacts from disk...")
+    print(f"Characters will explore their own ontologies to find research gaps")
+    print(f"{'='*70}\n")
+
+    # Load artifacts from disk
+    from llmkglitrev.characters.artifact import ConversationArtifactManager, ConversationArtifact
+    from llmkglitrev.characters import CharacterManager
+    from llmkglitrev.agents.character_agent import CharacterBasedResearchAgent
+    from langchain_core.messages import HumanMessage
+
+    artifact_manager = ConversationArtifactManager()
+    loaded_artifacts = artifact_manager.load_artifacts(session_id)
+
+    if not loaded_artifacts:
+        print("⚠️  No artifacts found on disk! Using in-memory artifacts...")
+        loaded_artifacts = []
+        for artifact_dict in conversation_artifacts:
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+            loaded_artifacts.append(artifact)
+
+    print(f"✓ Loaded {len(loaded_artifacts)} artifacts")
+
+    # For each character, identify gaps using THEIR OWN ontology
+    manager = CharacterManager()
+    identified_gaps = []
+
+    for artifact in loaded_artifacts:
+        character = manager.load_character(artifact.character_id)
+
+        # Create agent with artifact
+        agent = CharacterBasedResearchAgent(
+            character=character,
+            session_id=session_id,
+            literature_subset=[]
+        )
+        agent.artifact = artifact
+
+        print(f"🔍 {character.name} exploring ontology for gaps...")
+
+        # Use ontology to identify gaps
+        gap_identification_prompt = f"""
+Review the unified research proposal and your research findings.
+
+Using YOUR domain ontology, identify:
+1. Research gaps - what's missing or unexplored
+2. Alternative perspectives - different ways to approach this
+3. New research ideas - extensions or related questions
+
+Unified Proposal:
+{final_proposal}
+
+Your Research:
+{artifact.research_output[:2000]}...  # Truncate for context
+
+For each gap, provide:
+- Gap description
+- Why it's important (from YOUR ontology perspective)
+- Suggested research direction
+- Feasibility assessment
+"""
+
+        # Get LLM response
+        response = await agent.agent_executor.ainvoke({
+            "messages": [HumanMessage(content=gap_identification_prompt)]
+        })
+
+        gap_text = response["messages"][-1].content
+
+        identified_gaps.append({
+            "character_id": artifact.character_id,
+            "character_name": character.name,
+            "domain": artifact.domain,
+            "gaps_identified": gap_text,
+            "ontology_used": "own"  # Using own ontology
+        })
+
+        print(f"✓ {character.name} identified gaps\n")
+
+    print(f"\n✅ Gap identification complete!")
+    print(f"Identified gaps from {len(identified_gaps)} characters\n")
+
+    return {
+        "identified_gaps": identified_gaps,
+        "gap_identification_complete": True
+    }
+
+
+async def run_socratic_dialogue(state: AgentState) -> dict:
+    """Phase 6: Socratic dialogue using own ontology perspectives.
+
+    Characters ask critical questions using their own ontology for presentation prep.
+    Uses existing dialogue_coordinator infrastructure.
+    """
+    session_id = state.get("session_id")
+
+    print(f"\n{'='*70}")
+    print(f"PHASE 6: SOCRATIC DIALOGUE")
+    print(f"{'='*70}")
+    print(f"Session ID: {session_id}")
+    print(f"Characters will ask critical questions using their own ontologies")
+    print(f"{'='*70}\n")
+
+    # Load artifacts (same as Phase 5)
+    from llmkglitrev.characters.artifact import ConversationArtifactManager
+
+    artifact_manager = ConversationArtifactManager()
+    loaded_artifacts = artifact_manager.load_artifacts(session_id)
+
+    if not loaded_artifacts:
+        print("⚠️  No artifacts found! Using in-memory artifacts...")
+        conversation_artifacts = state.get("conversation_artifacts", [])
+        from llmkglitrev.characters.artifact import ConversationArtifact
+        loaded_artifacts = []
+        for artifact_dict in conversation_artifacts:
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+            loaded_artifacts.append(artifact)
+
+    print(f"✓ Loaded {len(loaded_artifacts)} artifacts")
+
+    # Use dialogue_coordinator (existing code)
+    from llmkglitrev.agents.dialogue_coordinator import create_dialogue_coordinator
+
+    coordinator = create_dialogue_coordinator(min_priority=7)
+
+    dialogue_state = {
+        "session_id": session_id,
+        "conversation_artifacts": [a.model_dump() for a in loaded_artifacts],
+        "pending_notes": [],
+        "current_note": None,
+        "dialogue_history": [],
+        "current_question": "",
+        "current_answer": "",
+        "waiting_for_feedback": False,
+        "dialogue_complete": False,
+        "user_requested_stop": False,
+        "min_priority": 7
+    }
+
+    config = {"configurable": {"thread_id": f"dialogue-{session_id}"}}
+
+    # Run dialogue with interrupts for user feedback
+    print("Starting Socratic dialogue coordinator...")
+    async for event in coordinator.astream(dialogue_state, config=config):
+        # Just track progress, actual interaction happens in Streamlit via interrupts
+        pass
+
+    # Get final state
+    final_state = coordinator.get_state(config)
+    dialogue_history = final_state.values.get("dialogue_history", [])
+
+    print(f"\n✅ Socratic dialogue complete!")
+    print(f"Recorded {len(dialogue_history)} question-answer exchanges\n")
+
+    return {
+        "dialogue_history": dialogue_history,
+        "dialogue_complete": True
+    }
+
+
+async def industry_partner_review(state: AgentState) -> dict:
+    """Phase 7: Industry partners review using OTHER researchers' ontologies.
+
+    Industrial partners ask operational questions about:
+    - Project alignment and objectives
+    - Implementation steps and resources
+    - Practical feasibility and risks
+
+    Key difference: Partners review using OTHER researchers' ontologies (not their own).
+    """
+    session_id = state.get("session_id")
+    final_proposal = state.get("final_proposal", "")
+
+    print(f"\n{'='*70}")
+    print(f"PHASE 7: INDUSTRY PARTNER REVIEW")
+    print(f"{'='*70}")
+    print(f"Session ID: {session_id}")
+    print(f"Industry partners will review using OTHER researchers' ontologies")
+    print(f"{'='*70}\n")
+
+    # Load artifacts
+    from llmkglitrev.characters.artifact import ConversationArtifactManager
+
+    artifact_manager = ConversationArtifactManager()
+    loaded_artifacts = artifact_manager.load_artifacts(session_id)
+
+    if not loaded_artifacts:
+        print("⚠️  No artifacts found! Using in-memory artifacts...")
+        conversation_artifacts = state.get("conversation_artifacts", [])
+        from llmkglitrev.characters.artifact import ConversationArtifact
+        loaded_artifacts = []
+        for artifact_dict in conversation_artifacts:
+            artifact = ConversationArtifact.model_validate(artifact_dict)
+            loaded_artifacts.append(artifact)
+
+    print(f"✓ Loaded {len(loaded_artifacts)} artifacts")
+
+    # Create industry partner personas
+    industry_partners = [
+        {
+            "name": "Project Manager",
+            "focus": "Project alignment, timelines, deliverables",
+            "ontology_perspective": "operational"
+        },
+        {
+            "name": "Technical Lead",
+            "focus": "Implementation steps, technical feasibility",
+            "ontology_perspective": "technical"
+        },
+        {
+            "name": "Stakeholder",
+            "focus": "ROI, impact, resource allocation",
+            "ontology_perspective": "business"
+        }
+    ]
+
+    industry_feedback = []
+
+    # Use LLM to generate feedback from each partner
+    from langchain.chat_models import init_chat_model
+    from langchain_core.messages import HumanMessage
+
+    review_model = init_chat_model(model="deepseek:deepseek-chat")
+
+    for partner in industry_partners:
+        print(f"👔 {partner['name']} reviewing...")
+
+        # Partner reviews using OTHER researchers' ontologies
+        ontology_list = "\n".join([
+            f"- {a.character_id} ({a.domain}): {a.research_output[:500]}..."
+            for a in loaded_artifacts
+        ])
+
+        prompt = f"""
+You are a {partner['name']} reviewing this research proposal.
+
+IMPORTANT: Review using the ontologies and perspectives of these researchers:
+{ontology_list}
+
+Proposal:
+{final_proposal[:2000]}...
+
+From your {partner['focus']} perspective, ask operational questions about:
+- How does this align with project objectives?
+- What are the implementation steps?
+- What resources are needed?
+- What are the risks and mitigations?
+- What is the timeline for deliverables?
+
+Provide specific, actionable feedback focused on practical feasibility.
+"""
+
+        response = await review_model.ainvoke([HumanMessage(content=prompt)])
+
+        industry_feedback.append({
+            "partner_name": partner['name'],
+            "focus_area": partner['focus'],
+            "ontologies_reviewed": [a.character_id for a in loaded_artifacts],
+            "feedback": response.content
+        })
+
+        print(f"✓ {partner['name']} review complete\n")
+
+    print(f"\n✅ Industry partner review complete!")
+    print(f"Collected feedback from {len(industry_feedback)} partners\n")
+
+    return {
+        "industry_feedback": industry_feedback,
+        "industry_review_complete": True
+    }
+
+
+# ===== GRAPH CONSTRUCTION =====
 
 supervisor_agent = create_interactive_supervisor()
 agent_builder = StateGraph(AgentState, input_schema=AgentInputState)
@@ -501,6 +813,9 @@ agent_builder.add_node("instantiate_agents", instantiate_agents)  # NEW: Create 
 agent_builder.add_node("supervisor_subgraph", supervisor_agent)
 agent_builder.add_node("save_artifacts", save_artifacts)  # NEW: Save artifacts to disk
 agent_builder.add_node("final_research_proposal", final_research_proposal)
+agent_builder.add_node("identify_research_gaps", identify_research_gaps)  # PHASE 5
+agent_builder.add_node("run_socratic_dialogue", run_socratic_dialogue)  # PHASE 6
+agent_builder.add_node("industry_partner_review", industry_partner_review)  # PHASE 7
 
 # Add edges - NEW WORKFLOW:
 # 1. Format question and extract keywords
@@ -534,8 +849,17 @@ agent_builder.add_edge("supervisor_subgraph", "save_artifacts")
 # 8. Generate final proposal
 agent_builder.add_edge("save_artifacts", "final_research_proposal")
 
-# 9. End
+# 9. End (Phases 1-4 complete)
 agent_builder.add_edge("final_research_proposal", END)
+
+# NOTE: Phases 5-7 nodes are defined above but not connected to the main workflow yet.
+# They will be triggered manually from the Streamlit UI tabs.
+# To enable automatic execution, uncomment these edges:
+#
+# agent_builder.add_edge("final_research_proposal", "identify_research_gaps")  # Phase 5
+# agent_builder.add_edge("identify_research_gaps", "run_socratic_dialogue")  # Phase 6
+# agent_builder.add_edge("run_socratic_dialogue", "industry_partner_review")  # Phase 7
+# agent_builder.add_edge("industry_partner_review", END)
 
 # Compile with MemorySaver checkpointer to support interrupts
 # Configure to interrupt BEFORE process_plan_approval for user approval

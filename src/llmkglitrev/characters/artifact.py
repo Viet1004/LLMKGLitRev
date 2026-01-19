@@ -1,8 +1,8 @@
-"""Conversation artifact schemas and management.
+"""Unified character and artifact management.
 
-This module defines ephemeral conversation artifacts that are separate from
-reusable character configurations. Artifacts store research outputs, dialogue
-notes, and conversation history for a specific research session.
+This module defines the unified CharacterWithArtifact schema that combines
+character configuration with optional research artifacts. All characters and
+their research outputs are stored together in session directories.
 """
 
 from pydantic import BaseModel, Field
@@ -10,6 +10,9 @@ from typing import List, Dict, Literal, Optional
 from datetime import datetime
 from pathlib import Path
 import json
+
+# Import ResearchCharacter from schema
+from .schema import ResearchCharacter
 
 
 class DialogueNote(BaseModel):
@@ -161,6 +164,263 @@ class ConversationArtifact(BaseModel):
             ]
         }
     }
+
+
+class CharacterWithArtifact(BaseModel):
+    """
+    Unified schema combining character configuration and optional research artifact.
+
+    This is the single source of truth for a character in a session. It contains:
+    - character_config: The character's identity, domain expertise, and behavior (always present)
+    - research_artifact: The research output from this character (optional - only after research)
+
+    Usage:
+    - Before research: Save character_config only (research_artifact = None)
+    - After research: Update with research_artifact containing research output
+    - For dialogue: Load both character_config and research_artifact together
+
+    All files are stored in sessions/{session_id}/conversations/{character_id}.json
+    """
+
+    # Character configuration (always present)
+    character_config: ResearchCharacter = Field(
+        description="Character identity, domain knowledge, and behavior configuration"
+    )
+
+    # Research artifact (optional - only present after research is complete)
+    research_artifact: Optional[ConversationArtifact] = Field(
+        default=None,
+        description="Research output and dialogue preparation (None before research)"
+    )
+
+    # Metadata
+    created_at: datetime = Field(
+        default_factory=datetime.now,
+        description="When this entry was created"
+    )
+
+    last_updated: datetime = Field(
+        default_factory=datetime.now,
+        description="When this entry was last updated"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "character_config": {
+                        "character_id": "ml_expert_critical",
+                        "name": "Dr. Machine Learning",
+                        "domain": "Machine Learning",
+                        "sub_domains": ["deep learning", "NLP"],
+                        "stance": "critical",
+                        "communication_style": "academic"
+                    },
+                    "research_artifact": {
+                        "session_id": "session-123",
+                        "character_id": "ml_expert_critical",
+                        "domain": "Machine Learning",
+                        "research_output": "Research findings...",
+                        "dialogue_notes": []
+                    }
+                }
+            ]
+        }
+    }
+
+
+class UnifiedCharacterManager:
+    """
+    Manage unified character configurations and artifacts.
+
+    This is the new, simplified manager that stores everything in one place:
+    sessions/{session_id}/conversations/{character_id}.json
+
+    Each file contains:
+    - character_config: The character's identity and configuration
+    - research_artifact: The research output (optional, None before research)
+
+    Usage:
+    1. Create character: save_character(session_id, character) -> saves with artifact=None
+    2. After research: update_artifact(session_id, character_id, artifact) -> adds research output
+    3. Load for dialogue: load_character(session_id, character_id) -> returns CharacterWithArtifact
+
+    System templates are defined in code (see system_templates.py).
+    """
+
+    def __init__(self, storage_path: str = "sessions/"):
+        """
+        Initialize unified character manager.
+
+        Args:
+            storage_path: Base directory for session storage (default: sessions/)
+        """
+        self.storage_path = Path(storage_path)
+
+    def save_character(
+        self,
+        session_id: str,
+        character: ResearchCharacter,
+        artifact: Optional[ConversationArtifact] = None
+    ) -> str:
+        """
+        Save character configuration (with optional artifact).
+
+        Use this when:
+        - Creating a new character for a session (artifact=None)
+        - Saving character with completed research (artifact provided)
+
+        Args:
+            session_id: The session ID
+            character: The character configuration
+            artifact: Optional research artifact (None before research)
+
+        Returns:
+            The character ID
+        """
+        session_path = self.storage_path / session_id / "conversations"
+        session_path.mkdir(parents=True, exist_ok=True)
+
+        # Create unified entry
+        unified = CharacterWithArtifact(
+            character_config=character,
+            research_artifact=artifact,
+            created_at=datetime.now(),
+            last_updated=datetime.now()
+        )
+
+        file_path = session_path / f"{character.character_id}.json"
+        with open(file_path, 'w') as f:
+            f.write(unified.model_dump_json(indent=2))
+
+        return character.character_id
+
+    def load_character(
+        self,
+        session_id: str,
+        character_id: str
+    ) -> CharacterWithArtifact:
+        """
+        Load character with artifact from session.
+
+        Args:
+            session_id: The session ID
+            character_id: The character ID
+
+        Returns:
+            CharacterWithArtifact containing both config and optional artifact
+
+        Raises:
+            ValueError: If character not found
+        """
+        file_path = self.storage_path / session_id / "conversations" / f"{character_id}.json"
+
+        if not file_path.exists():
+            raise ValueError(f"Character {character_id} not found in session {session_id}")
+
+        with open(file_path) as f:
+            return CharacterWithArtifact.model_validate_json(f.read())
+
+    def update_artifact(
+        self,
+        session_id: str,
+        character_id: str,
+        artifact: ConversationArtifact
+    ):
+        """
+        Update character's research artifact after research completes.
+
+        Args:
+            session_id: The session ID
+            character_id: The character ID
+            artifact: The research artifact to add
+        """
+        # Load existing character
+        unified = self.load_character(session_id, character_id)
+
+        # Update artifact
+        unified.research_artifact = artifact
+        unified.last_updated = datetime.now()
+
+        # Save back
+        file_path = self.storage_path / session_id / "conversations" / f"{character_id}.json"
+        with open(file_path, 'w') as f:
+            f.write(unified.model_dump_json(indent=2))
+
+    def load_all_characters(
+        self,
+        session_id: str
+    ) -> Dict[str, CharacterWithArtifact]:
+        """
+        Load all characters for a session.
+
+        Args:
+            session_id: The session ID
+
+        Returns:
+            Dictionary mapping character_id to CharacterWithArtifact
+        """
+        session_path = self.storage_path / session_id / "conversations"
+
+        if not session_path.exists():
+            return {}
+
+        characters = {}
+        for file_path in session_path.glob("*.json"):
+            try:
+                with open(file_path) as f:
+                    unified = CharacterWithArtifact.model_validate_json(f.read())
+                    characters[unified.character_config.character_id] = unified
+            except Exception as e:
+                print(f"Warning: Could not load character from {file_path}: {e}")
+
+        return characters
+
+    def character_exists(
+        self,
+        session_id: str,
+        character_id: str
+    ) -> bool:
+        """
+        Check if character exists in session.
+
+        Args:
+            session_id: The session ID
+            character_id: The character ID
+
+        Returns:
+            True if character exists
+        """
+        file_path = self.storage_path / session_id / "conversations" / f"{character_id}.json"
+        return file_path.exists()
+
+    def list_characters(
+        self,
+        session_id: str
+    ) -> List[Dict]:
+        """
+        List all characters in a session with metadata.
+
+        Args:
+            session_id: The session ID
+
+        Returns:
+            List of character metadata dictionaries
+        """
+        characters = self.load_all_characters(session_id)
+
+        return [
+            {
+                "character_id": unified.character_config.character_id,
+                "name": unified.character_config.name,
+                "domain": unified.character_config.domain,
+                "stance": unified.character_config.stance,
+                "has_artifact": unified.research_artifact is not None,
+                "created_at": unified.created_at,
+                "last_updated": unified.last_updated
+            }
+            for unified in characters.values()
+        ]
 
 
 class ConversationArtifactManager:

@@ -256,23 +256,34 @@ def tavily_search(
     # Format output for consumption
     return format_search_output(summarized_results)
 
-def summarize_webpage_content(webpage_content: str, convert_to_markdown: bool = True) -> str:
+def summarize_webpage_content(webpage_content: str, convert_to_markdown: bool = True, max_chars: int = 60000) -> str:
     """Summarize webpage content using the configured summarization model.
 
     Args:
         webpage_content: Raw webpage content to summarize
         convert_to_markdown: Whether to convert HTML to markdown first (saves context)
+        max_chars: Maximum characters to process (default: 60000)
 
     Returns:
         Formatted summary with key excerpts
     """
     try:
+        # Limit content length to avoid excessive processing
+        if len(webpage_content) > max_chars:
+            print(f"⚠️  Content too long ({len(webpage_content)} chars), truncating to {max_chars} chars")
+            webpage_content = webpage_content[:max_chars]
+
         # Convert HTML to markdown for more concise context
         content_to_summarize = webpage_content
         if convert_to_markdown and DOCLING_AVAILABLE:
             try:
                 content_to_summarize = convert_html_to_markdown(webpage_content)
                 print(f"✓ Converted HTML to markdown (reduced from {len(webpage_content)} to {len(content_to_summarize)} chars)")
+
+                # Apply limit again after conversion if needed
+                if len(content_to_summarize) > max_chars:
+                    print(f"⚠️  Markdown still too long ({len(content_to_summarize)} chars), truncating to {max_chars} chars")
+                    content_to_summarize = content_to_summarize[:max_chars]
             except Exception as e:
                 print(f"Markdown conversion failed, using raw content: {str(e)}")
                 content_to_summarize = webpage_content

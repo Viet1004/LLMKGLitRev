@@ -90,7 +90,10 @@ async def generate_research_plan(
     Returns:
         Proposed research plan or None if error
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 50  # Increased from default 25 to handle nested agent loops
+    }
 
     # Use the pre-compiled agent graph
     agent = proposal_generator_agent
@@ -144,7 +147,10 @@ async def resume_after_plan_approval(
     Returns:
         Updated state after resuming
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 50
+    }
     agent = proposal_generator_agent
 
     # Prepare resume data
@@ -181,18 +187,41 @@ async def execute_research_with_monitoring(
     Yields:
         Progress events with status, character info, and actions
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 50  # Increased from default 25 to handle nested agent loops
+    }
     agent = proposal_generator_agent
 
     try:
         # If we need to resume from plan approval, do it via streaming
         if resume_with_approval:
+            # Debug: Check state BEFORE resume
+            state_before = agent.get_state(config)
+            original_plan = state_before.values.get("proposed_research_plan", {})
+            print(f"\n🔍 DEBUG: State BEFORE resume has {len(original_plan.get('proposed_agents', []))} agents")
+            
+            # CRITICAL FIX: Use agent.update_state() to modify the checkpoint BEFORE resuming
+            # This ensures the modified plan is in the state when process_plan_approval runs
+            if modified_plan:
+                num_agents = len(modified_plan.get("proposed_agents", []))
+                print(f"🔍 DEBUG: Updating state with modified plan ({num_agents} agents)")
+                for idx, agent_config in enumerate(modified_plan.get("proposed_agents", []), 1):
+                    print(f"   Agent {idx}: {agent_config['domain']} ({agent_config['recommended_character']})")
+                
+                # Update the state directly to overwrite the checkpoint
+                agent.update_state(config, {
+                    "proposed_research_plan": modified_plan,
+                    "plan_approved": True
+                })
+                
+                print("✅ State updated successfully")
+            
+            # Now resume execution - the state already has the modified plan
             resume_data = {
                 "plan_approved": True,
                 "user_feedback": ""
             }
-            if modified_plan:
-                resume_data["proposed_research_plan"] = modified_plan
 
             # Resume and stream the execution
             async for event in agent.astream(Command(resume=resume_data), config, stream_mode="values"):
@@ -273,7 +302,10 @@ async def resume_after_supervisor_feedback(
     Returns:
         Updated state after resuming
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 50
+    }
     agent = proposal_generator_agent
 
     # Resume with feedback
@@ -406,13 +438,16 @@ def load_session_artifacts(session_id: str) -> List[Dict[str, Any]]:
     """
     Load all artifacts for a session from disk.
 
+    NEW: Uses unified format - loads artifacts from character entries
+
     Args:
         session_id: Session ID to load
 
     Returns:
         List of artifact dictionaries
     """
-    manager = ConversationArtifactManager()
+    from llmkglitrev.characters.artifact import UnifiedCharacterManager
+    unified_manager = UnifiedCharacterManager()
     artifacts = []
 
     session_path = Path(f"sessions/{session_id}/conversations/")
@@ -420,10 +455,13 @@ def load_session_artifacts(session_id: str) -> List[Dict[str, Any]]:
         return []
 
     try:
-        for artifact_file in session_path.glob("*.json"):
-            character_id = artifact_file.stem
-            artifact = manager.load_artifact(session_id, character_id)
-            artifacts.append(artifact.model_dump())
+        # Load all unified characters
+        loaded_characters = unified_manager.load_all_characters(session_id)
+
+        # Extract artifacts (skip characters without artifacts)
+        for character_with_artifact in loaded_characters.values():
+            if character_with_artifact.research_artifact:
+                artifacts.append(character_with_artifact.research_artifact.model_dump())
     except Exception as e:
         print(f"⚠️  Error loading artifacts: {e}")
 

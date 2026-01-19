@@ -77,12 +77,14 @@ class CharacterManager:
         """
         # Try user-defined first
         user_file = self.user_path / f"{character_id}.json"
+        print("User file is: ", user_file)
         if user_file.exists():
             with open(user_file) as f:
                 return ResearchCharacter.model_validate_json(f.read())
 
         # Fall back to system default
         system_file = self.system_path / f"{character_id}.json"
+        print("System file is: ", system_file)
         if system_file.exists():
             with open(system_file) as f:
                 return ResearchCharacter.model_validate_json(f.read())

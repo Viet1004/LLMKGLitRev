@@ -134,6 +134,12 @@ Each topic should be assigned to a different domain expert character.
 
     except Exception as e:
         print(f"\n❌ Error generating research plan: {e}")
+        print(f"⚠️  ERROR TYPE: {type(e).__name__}")
+
+        # Check if it's a validation error
+        if "validation error" in str(e).lower() or "string_too_long" in str(e).lower():
+            print("⚠️  CAUSE: LLM response exceeded schema constraints (likely research_strategy > 500 chars)")
+
         import traceback
         traceback.print_exc()
 
@@ -159,7 +165,11 @@ Each topic should be assigned to a different domain expert character.
             "interdisciplinary_connections": "Agents will collaborate on technical and practical aspects"
         }
 
-        print("\n⚠️  Using fallback research plan with default templates")
+        print("\n" + "="*70)
+        print("⚠️  WARNING: Using fallback research plan with default templates")
+        print("⚠️  This plan may NOT match your research topic!")
+        print("⚠️  You can modify the plan during approval or re-run the workflow.")
+        print("="*70)
         print("⏸️  Fallback plan ready - graph will interrupt before process_plan_approval")
 
         # Return fallback plan - graph will automatically interrupt
@@ -176,6 +186,10 @@ def process_plan_approval(state: AgentState) -> Dict[str, Any]:
     This node runs after the interrupt is resumed with human feedback.
     It parses the feedback and updates the plan accordingly.
 
+    CRITICAL: When resuming via Command(resume={...}), the resume data is NOT automatically
+    merged into the state. We must explicitly return the updated plan to override the 
+    checkpoint state.
+
     Args:
         state: Agent state with proposed_research_plan and human feedback
 
@@ -184,13 +198,18 @@ def process_plan_approval(state: AgentState) -> Dict[str, Any]:
     """
     import json
 
-    # Get the human feedback from the interrupt resume
-    # This will be available in the state after interrupt
+    # Get the plan from state (this might be the OLD plan from checkpoint)
     proposed_plan = state.get("proposed_research_plan", {})
 
     print("\n" + "="*70)
     print("📝 PROCESSING PLAN APPROVAL")
     print("="*70)
+    
+    # Debug: Show what plan we received
+    num_agents_in_plan = len(proposed_plan.get("proposed_agents", []))
+    print(f"\n🔍 DEBUG: Received plan with {num_agents_in_plan} agents in state")
+    for idx, agent in enumerate(proposed_plan.get("proposed_agents", []), 1):
+        print(f"   Agent {idx}: {agent.get('domain', 'Unknown')} ({agent.get('recommended_character', 'Unknown')})")
 
     # For now, we'll mark as approved
     # The interactive_runner will handle parsing feedback
@@ -212,8 +231,15 @@ def process_plan_approval(state: AgentState) -> Dict[str, Any]:
         character_configs.append(char_config)
 
     print(f"\n✅ Plan approved with {len(character_configs)} agents")
+    print("\n🔍 DEBUG: Final character_configs:")
+    for idx, config in enumerate(character_configs, 1):
+        print(f"   Config {idx}: {config['domain']} ({config['character_id']})")
 
+    # CRITICAL FIX: Return the proposed_research_plan in the update to ensure
+    # it overwrites the checkpoint state. LangGraph's Command(resume={...}) doesn't
+    # automatically merge nested dicts - we must explicitly return it.
     return {
         "plan_approved": True,
-        "character_configs": character_configs
+        "character_configs": character_configs,
+        "proposed_research_plan": proposed_plan  # Explicitly return to overwrite checkpoint
     }

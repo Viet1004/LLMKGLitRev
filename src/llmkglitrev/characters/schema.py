@@ -63,7 +63,7 @@ class ResearchCharacter(BaseModel):
         description="Overall attitude toward research proposals"
     )
 
-    communication_style: Literal["academic", "conversational", "technical", "executive"] = Field(
+    communication_style: str = Field(
         default="academic",
         description="How the character communicates"
     )

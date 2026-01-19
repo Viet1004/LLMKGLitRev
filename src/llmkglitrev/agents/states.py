@@ -91,7 +91,7 @@ class ResearchSummary(BaseModel):
     research_question: str = Field(
         description="The key research question",
         min_length=10,
-        max_length=500,
+        max_length=1000,
         examples=["How can machine learning improve early disease detection in medical imaging?"]
     )
 
@@ -142,7 +142,7 @@ class AgentProposal(BaseModel):
     rationale: str = Field(
         description="Explanation for why this agent is needed (2-3 sentences)",
         min_length=50,
-        max_length=500,
+        max_length=1000,
         examples=["This agent will evaluate the algorithmic approaches from a critical ML perspective, identifying potential overfitting issues and generalization challenges."]
     )
 
@@ -158,7 +158,7 @@ class ResearchPlan(BaseModel):
     research_strategy: str = Field(
         description="Overall research strategy and approach (2-3 sentences)",
         min_length=50,
-        max_length=500,
+        max_length=1000,
         examples=["We will use a multi-perspective approach combining algorithmic analysis with domain expertise and ethical considerations."]
     )
 
@@ -242,4 +242,12 @@ class AgentState(MessagesState):
     plan_approved: bool  # Whether user approved the proposed plan
     retrieved_papers: List[dict]  # Retrieved papers from Neo4j
     literature_context: str  # Formatted literature context
+
+    # Phase 5-7: Gap Identification, Dialogue, Industry Review
+    identified_gaps: List[dict] = []  # Gap identification results from Phase 5
+    gap_identification_complete: bool = False  # Whether Phase 5 completed
+    dialogue_history: List[dict] = []  # DialogueQA records from Phase 6
+    dialogue_complete: bool = False  # Whether Phase 6 completed
+    industry_feedback: List[dict] = []  # Industry partner reviews from Phase 7
+    industry_review_complete: bool = False  # Whether Phase 7 completed
 
