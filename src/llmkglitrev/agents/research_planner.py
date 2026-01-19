@@ -15,11 +15,12 @@ from llmkglitrev.characters import CharacterManager
 
 
 # Use a capable model for strategic planning
-planning_model = init_chat_model(
-    model="anthropic:claude-sonnet-4-20250514",
-    max_tokens=4000
-).with_structured_output(ResearchPlan)
+# planning_model = init_chat_model(
+#     model="anthropic:claude-sonnet-4-20250514",
+#     max_tokens=4000
+# ).with_structured_output(ResearchPlan)
 
+planning_model = init_chat_model(model="deepseek:deepseek-chat").with_structured_output(ResearchPlan)
 
 async def propose_research_plan(state: AgentState) -> Dict[str, Any]:
     """
