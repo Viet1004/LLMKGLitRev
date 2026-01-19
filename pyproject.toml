@@ -11,14 +11,43 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-
-# NOTE: Dependencies are specified in requirements.txt for Streamlit Cloud
-# This prevents conflicts and ensures clean installation
-# For local development with editable install, see pyproject.dev.toml
+dependencies = [
+    # "arxiv-mcp-server[test]",  # Disabled for Streamlit Cloud - local workspace only
+    "boto3>=1.40.17",
+    "dspy==2.6.20",
+    "fastapi>=0.116.1",
+    "fastparquet>=2024.11.0",
+    "gradio>=5.39.0",
+    "grandalf>=0.8",
+    "graphdatascience>=0.1.0",
+    "ipykernel>=6.30.0",
+    "kg-gen>=0.1.6",
+    "langchain>=0.3.27",
+    "streamlit>=1.32.0",
+    "langchain-anthropic>=0.3.19",
+    "langchain-aws>=0.2.31",
+    "langchain-huggingface>=0.3.1",
+    "langchain-mcp-adapters>=0.1.9",
+    "langchain-openai>=0.3.32",
+    "langgraph>=0.6.6",
+    "matplotlib>=3.7.0",
+    "mcp[cli]>=1.12.2",
+    "neo4j>=4.4.2,<5.0",
+    "networkx>=3.0",
+    "plotly>=5.18.0",
+    "pyarrow>=21.0.0",
+    "qdrant-client>=1.16.0",
+    "smolagents>=1.20.0",
+    "tavily-python>=0.7.11",
+    "transformers>=4.54.0",
+    "langchain-deepseek>=0.1.4",
+    "sentence-transformers>=5.2.0",
+]
 
 [project.urls]
 Homepage = "https://Viet1004.github.io/LLMKGLitRev/"
@@ -39,16 +68,12 @@ dev = [
     "mkdocstrings[python]>=0.26.1",
 ]
 
-# [build-system]
-# requires = ["hatchling"]
-# build-backend = "hatchling.build"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-# [tool.hatch.build.targets.wheel]
-# packages = ["src/llmkglitrev"]
-
-# Note: Build system disabled for Streamlit Cloud deployment
-# Streamlit automatically adds repo root to PYTHONPATH
-# For local development with editable install, uncomment above sections
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmkglitrev"]
 
 [tool.mypy]
 files = ["src"]
@@ -59,9 +84,9 @@ check_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
-# exclude = [
-#     "src/llmkglitrev/MCPServer/arxiv-mcp-server/"
-# ]
+exclude = [
+    "src/llmkglitrev/MCPServer/arxiv-mcp-server/"
+]
 # Ignore specific untyped libraries
 [[tool.mypy.overrides]]
 module = [
