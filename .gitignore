@@ -144,3 +144,6 @@ data/
 
 # Exclude MCP Server (local development only, not for Streamlit Cloud)
 src/llmkglitrev/MCPServer/
+
+# UV lock file (regenerated locally, not for Streamlit Cloud)
+uv.lock
