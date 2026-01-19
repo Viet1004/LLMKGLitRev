@@ -85,9 +85,10 @@ def _search_arxiv_internal(
             sort_by=arxiv.SortCriterion.Relevance
         )
         results = []
+        print("===================")
+        print(search)
         for paper in search.results():
-            print("=============")
-            print(paper)
+            
             if date_from:
                 from datetime import datetime
                 pub_date = paper.published.date()
