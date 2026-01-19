@@ -68,28 +68,28 @@ def _search_arxiv_internal(
     categories: Optional[List[str]] = None
 ) -> List[Dict]:
     """Internal arXiv search that returns List[Dict]."""
-    print("-1:::===================")
+    # print("-1:::===================")
     try:
         import arxiv
 
     except ImportError:
-        print("-0.5:::===================")
+        # print("-0.5:::===================")
         return []
-    print("0:::===================")
+    # print("0:::===================")
     try:
-        print("1:::===================")
+        # print("1:::===================")
         search_query = query
         if categories:
             category_filter = " OR ".join([f"cat:{c}" for c in categories])
             search_query = f"{query} AND ({category_filter})"
-        print("2:::===================")
+        # print("2:::===================")
         search = arxiv.Search(
             query=search_query,
             max_results=max_results * 2,
             sort_by=arxiv.SortCriterion.Relevance
         )
         results = []
-        print("3::::===================")
+        # print("3::::===================")
         print(search)
         for paper in search.results():
             

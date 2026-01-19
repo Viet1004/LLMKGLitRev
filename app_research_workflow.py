@@ -1236,40 +1236,40 @@ def render_results_stage():
     st.markdown("---")
 
     # Tabbed interface for different views (Fix 3: Activity log moved to tab)
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "📄 Research Artifacts",
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        # "📄 Research Artifacts",
         "🔍 Concept Visualization",
         "🔗 Cross-Domain Validation",
         # "📊 Dashboard",
-        "🔧 Activity Log",
+        # "🔧 Activity Log",
         "💡 Gap Identification",
         "🗣️ Socratic Dialogue",
         "🏢 Industry Review"
     ])
 
-    with tab1:
-        render_artifacts_tab(artifacts)
+    # with tab1:
+        # render_artifacts_tab(artifacts)
 
-    with tab2:
+    with tab1:
         render_visualization_tab(artifacts)
 
-    with tab3:
+    with tab2:
         render_cross_domain_validation_tab(artifacts)
 
     # with tab4:
     #     render_dashboard_tab(artifacts)
 
-    with tab4:
-        st.caption("Detailed research activity, queries, and tool calls")
-        render_activity_log()
+    # with tab3:
+    #     st.caption("Detailed research activity, queries, and tool calls")
+    #     render_activity_log()
 
-    with tab5:
+    with tab3:
         render_gap_identification_tab()
 
-    with tab6:
+    with tab4:
         render_socratic_dialogue_tab()
 
-    with tab7:
+    with tab5:
         render_industry_review_tab()
 
     st.markdown("---")
