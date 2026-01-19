@@ -51,7 +51,7 @@ docling==2.42.2
 docling-core==2.43.1
 docling-ibm-models==3.9.0
 docling-parse==4.1.0
-dspy==2.6.20
+dspy==3.1.0
 easyocr==1.7.2
 et-xmlfile==2.0.0
 executing==2.2.0
