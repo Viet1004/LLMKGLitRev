@@ -155,10 +155,13 @@ skip_empty = true
 branch = true
 source = ["src"]
 
-[tool.uv.sources]
-arxiv-mcp-server = { workspace = true }
+# [tool.uv.sources]
+# arxiv-mcp-server = { workspace = true }
 
-[tool.uv.workspace]
-members = [
-    "src/llmkglitrev/MCPServer/arxiv-mcp-server",
-]
+# [tool.uv.workspace]
+# members = [
+#     "src/llmkglitrev/MCPServer/arxiv-mcp-server",
+# ]
+
+# Note: Workspace members disabled for Streamlit Cloud deployment.
+# To use arxiv-mcp-server locally, uncomment the sections above.
