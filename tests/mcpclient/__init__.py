@@ -1,1 +1,0 @@
-# MCP Client tests module
