@@ -139,6 +139,19 @@ class AgentProposal(BaseModel):
         examples=[["deep learning", "transfer learning", "few-shot learning"]]
     )
 
+    preferred_databases: List[Literal["arxiv", "scopus", "ieee"]] = Field(
+        default_factory=lambda: ["arxiv", "scopus", "ieee"],
+        description="Preferred academic databases for this agent to search",
+        examples=[["arxiv", "scopus"], ["ieee", "scopus"]]
+    )
+
+    preferred_venues: List[str] = Field(
+        default_factory=list,
+        description="Specific conferences and journals to prioritize (e.g., 'NeurIPS', 'IEEE TPAMI', 'Nature')",
+        max_length=10,
+        examples=[["NeurIPS", "ICML", "ICLR"], ["IEEE CVPR", "IEEE TPAMI"], ["Nature", "Science"]]
+    )
+
     rationale: str = Field(
         description="Explanation for why this agent is needed (2-3 sentences)",
         min_length=50,

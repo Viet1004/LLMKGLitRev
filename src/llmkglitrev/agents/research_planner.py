@@ -100,6 +100,8 @@ Each topic should be assigned to a different domain expert character.
             print(f"\n  Agent {i}: {agent.domain} ({agent.stance})")
             print(f"    Template: {agent.recommended_character}")
             print(f"    Focus: {', '.join(agent.search_scope[:3])}...")
+            print(f"    Databases: {', '.join(agent.preferred_databases)}")
+            print(f"    Venues: {', '.join(agent.preferred_venues[:3]) if agent.preferred_venues else 'N/A'}")
             print(f"    Rationale: {agent.rationale[:100]}...")
 
         # Convert to dict for JSON serialization

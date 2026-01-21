@@ -12,8 +12,10 @@ and focus on peer-reviewed literature.
 from typing import List, Dict, Optional
 from difflib import SequenceMatcher
 import re
+import json
 from langchain_core.tools import tool
-
+from dotenv import load_dotenv
+load_dotenv()
 
 # ===== Internal Helper Functions (return List[Dict]) =====
 
@@ -47,11 +49,11 @@ def _search_google_scholar_internal(
                 "year": paper.get("year"),
                 "venue": paper.get("venue", ""),
                 "abstract": paper.get("abstract", ""),
-                "citations": paper.get("citations", 0),
+                # "citations": paper.get("citations", 0),
                 "url": paper.get("url", ""),
                 "bibtex": paper.get("bibtex", ""),
                 "source": "google_scholar",
-                "relevance_score": _calculate_relevance_score(paper)
+                # "relevance_score": _calculate_relevance_score(paper)
             })
 
         return formatted_papers
@@ -264,6 +266,347 @@ def search_arxiv(
         return "No papers found for the given query in arXiv."
 
     output = f"Found {len(results)} papers from arXiv:\n\n"
+    for i, paper in enumerate(results, 1):
+        output += f"--- PAPER {i} ---\n"
+        output += format_paper_for_llm(paper)
+        output += "\n" + "=" * 80 + "\n\n"
+
+    return output
+
+
+# ===== Scopus Search =====
+
+def _search_scopus_internal(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> List[Dict]:
+    """Internal Scopus search that returns List[Dict]."""
+    try:
+        import pybliometrics
+        from pybliometrics.scopus import ScopusSearch
+    except ImportError:
+        print("Cannot import pybliometrics")
+        return []
+
+    try:
+        import os
+
+        # Get API key from environment
+        api_key = os.environ.get('SCOPUS_API_KEY')
+        if not api_key:
+            raise ValueError("SCOPUS_API_KEY environment variable not set")
+
+        # ALWAYS initialize pybliometrics with the API key
+        # This is required because pybliometrics checks for config at runtime
+        # The init() function is safe to call multiple times - it will update
+        # the config file (~/.config/pybliometrics.cfg in version 4.x+)
+        pybliometrics.init(keys=[api_key])
+
+        # Build query string using Scopus query syntax
+        # TITLE-ABS-KEY searches title, abstract, and keywords
+        # Remove any existing quotes to avoid syntax errors
+        clean_query = query.replace('"', '').replace("'", '').strip()
+
+        # Build base query - Scopus doesn't need quotes around the search term
+        # Just use parentheses: TITLE-ABS-KEY(machine learning)
+        scopus_query = f'TITLE-ABS-KEY({clean_query})'
+
+        # Add year filters using PUBYEAR with > and < operators (more reliable than >=, <=)
+        if year_from and year_to:
+            scopus_query += f" AND PUBYEAR > {year_from - 1} AND PUBYEAR < {year_to + 1}"
+        elif year_from:
+            scopus_query += f" AND PUBYEAR > {year_from - 1}"
+        elif year_to:
+            scopus_query += f" AND PUBYEAR < {year_to + 1}"
+
+        # Execute search (limit to 100 max)
+        try:
+            search = ScopusSearch(
+                query=scopus_query,
+                # max_entries=min(max_results, 100)
+            )
+        except TypeError as e:
+            raise(e)
+
+        if not search.results:
+            return []
+
+        results = []
+        for paper in search.results:
+            # Parse authors
+            authors = []
+            if paper.author_names:
+                authors = paper.author_names.split("; ")
+
+            results.append({
+                "title": paper.title or "Untitled",
+                "authors": authors,
+                "year": int(paper.coverDate[:4]) if paper.coverDate else None,
+                "abstract": paper.description or "",
+                "citations": int(paper.citedby_count) if paper.citedby_count else 0,
+                "url": f"https://www.scopus.com/record/display.uri?eid={paper.eid}" if paper.eid else "",
+                "doi": paper.doi or "",
+                "venue": paper.publicationName or "",
+                "source": "scopus",
+                "scopus_id": paper.eid,
+                "relevance_score": 0.7
+            })
+
+        return results
+
+    except Exception as e:
+        print(f"❌ Scopus search error: {e}")
+        # Check for specific error types
+        error_msg = str(e)
+        if "400" in error_msg or "translating query" in error_msg.lower():
+            print(f"   Query sent: {scopus_query}")
+            print(f"   Hint: Check query syntax at https://dev.elsevier.com/sc_search_tips.html")
+        raise  # Re-raise to show exact error
+
+
+@tool(parse_docstring=True)
+def search_scopus(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> str:
+    """
+    Search Scopus database for academic papers.
+
+    Searches across title, abstract, and keywords (TITLE-ABS-KEY).
+    Limited to 100 results maximum.
+
+    Args:
+        query: Search keywords (will search in title, abstract, and keywords)
+        max_results: Number of results (default 10, max 100)
+        year_from: Filter papers from this year onwards
+        year_to: Filter papers up to this year
+
+    Returns:
+        List of papers with title, authors, year, abstract, citations, DOI, venue, URL
+
+    Example:
+        >>> search_scopus(
+        ...     query="machine learning medical diagnosis",
+        ...     max_results=10,
+        ...     year_from=2020
+        ... )
+
+    Note: Requires SCOPUS_API_KEY environment variable or pybliometrics config.
+    """
+    # Check if package is installed
+    try:
+        from pybliometrics.scopus import ScopusSearch
+    except ImportError:
+        return "⚠️ pybliometrics not installed. Install with: pip install pybliometrics"
+
+    # Call internal function
+    try:
+        results = _search_scopus_internal(
+            query=query,
+            max_results=max_results,
+            year_from=year_from,
+            year_to=year_to
+        )
+    except Exception as e:
+        error_msg = str(e)
+        troubleshooting = "Troubleshooting:\n1. Check API key: Set SCOPUS_API_KEY environment variable\n2. Query format: Use quotes for phrases with spaces\n3. Valid operators: AND, OR, AND NOT\n"
+
+        # Add specific hints based on error type
+        if "400" in error_msg or "translating query" in error_msg.lower():
+            troubleshooting += f"4. Query syntax error - check: https://dev.elsevier.com/sc_search_tips.html\n5. Your query: '{query}'"
+        elif "401" in error_msg or "authentication" in error_msg.lower():
+            troubleshooting += "4. API key invalid or expired - check your SCOPUS_API_KEY"
+        elif "config" in error_msg.lower():
+            troubleshooting += "4. Run: python -c 'import pybliometrics; pybliometrics.init()'"
+
+        return f"❌ Scopus search failed: {error_msg}\n\n{troubleshooting}"
+
+    # Format as string for LLM
+    if not results:
+        return "No papers found in Scopus for the given query."
+
+    output = f"Found {len(results)} papers from Scopus:\n\n"
+    for i, paper in enumerate(results, 1):
+        output += f"--- PAPER {i} ---\n"
+        output += format_paper_for_llm(paper)
+        output += "\n" + "=" * 80 + "\n\n"
+
+    return output
+
+
+# ===== IEEE Xplore Search =====
+
+def _search_ieee_internal(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> List[Dict]:
+    """Internal IEEE Xplore search that returns List[Dict]."""
+    try:
+        import sys
+        from pathlib import Path
+        # Add xploreapi SDK to path (it's a local folder, not a pip package)
+        # Path is: src/llmkglitrev/ (parent.parent from agents/academic_search_tools.py)
+        xploreapi_path = Path(__file__).parent.parent
+        if str(xploreapi_path) not in sys.path:
+            sys.path.insert(0, str(xploreapi_path))
+        from xploreapi import XPLORE
+    except ImportError as e:
+        print(f"❌ Cannot import xploreapi: {e}")
+        return []
+
+    try:
+        import os
+        api_key = os.environ.get('IEEE_API_KEY')
+        if not api_key:
+            raise ValueError("IEEE_API_KEY environment variable not set")
+        print("IEEE API key: ", api_key)
+        # Initialize IEEE API
+        ieee = XPLORE(api_key)
+
+        # Keep output format as raw (default) to handle errors better
+        # We'll parse JSON manually
+        ieee.dataFormat('raw')
+
+        # Build query - queryText searches across title, abstract, index terms
+        ieee.queryText(query)
+
+        # Add year filters using searchField method (convert to string)
+        if year_from:
+            ieee.searchField('start_year', str(year_from))
+        if year_to:
+            ieee.searchField('end_year', str(year_to))
+
+        # Set result limit (max 200 per API docs, we limit to 100)
+        ieee.maximumResults(min(max_results, 100))
+
+        # Execute search - returns raw JSON string
+        raw_response = ieee.callAPI()
+
+        # Parse JSON manually with better error handling
+        if not raw_response or not raw_response.strip():
+            print(f"❌ IEEE API returned empty response")
+            return []
+
+        try:
+            response = json.loads(raw_response)
+        except json.JSONDecodeError as e:
+            # Check for common error messages
+            if "Developer Inactive" in raw_response:
+                raise ValueError("IEEE API key is inactive or expired. Please activate your developer account at https://developer.ieee.org/")
+            elif "Invalid API Key" in raw_response:
+                raise ValueError("Invalid IEEE API key. Check your IEEE_API_KEY environment variable")
+            else:
+                print(f"❌ Failed to parse IEEE response: {e}")
+                print(f"   Raw response (first 200 chars): {raw_response[:200]}")
+                return []
+
+        if not isinstance(response, dict) or 'articles' not in response:
+            print(f"❌ Unexpected IEEE response format")
+            if isinstance(response, dict):
+                print(f"   Response keys: {list(response.keys())}")
+            return []
+
+        results = []
+        for paper in response['articles']:
+            # Parse authors
+            authors = []
+            if 'authors' in paper:
+                if isinstance(paper['authors'], dict) and 'authors' in paper['authors']:
+                    for author in paper['authors']['authors']:
+                        if isinstance(author, dict):
+                            name = author.get('full_name', '')
+                            if name:
+                                authors.append(name)
+
+            # Get year from publication_year or parse from date
+            year = paper.get('publication_year')
+            if not year and 'publication_date' in paper:
+                try:
+                    year = int(paper['publication_date'].split('-')[0])
+                except:
+                    year = None
+
+            results.append({
+                "title": paper.get('title', 'Untitled'),
+                "authors": authors,
+                "year": year,
+                "abstract": paper.get('abstract', ''),
+                "citations": paper.get('citing_paper_count', 0),
+                "url": paper.get('html_url', ''),
+                "doi": paper.get('doi', ''),
+                "venue": paper.get('publication_title', ''),
+                "source": "ieee",
+                "ieee_id": paper.get('article_number', ''),
+                "relevance_score": 0.7
+            })
+
+        return results
+
+    except Exception as e:
+        print(f"❌ IEEE search error: {e}")
+        raise  # Re-raise to show exact error
+
+
+@tool(parse_docstring=True)
+def search_ieee(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> str:
+    """
+    Search IEEE Xplore database for academic papers.
+
+    Covers IEEE journals, conferences, and standards.
+    Limited to 100 results maximum.
+
+    Args:
+        query: Search keywords (searches in title, abstract, and metadata)
+        max_results: Number of results (default 10, max 100)
+        year_from: Filter papers from this year onwards
+        year_to: Filter papers up to this year
+
+    Returns:
+        List of papers with title, authors, year, abstract, citations, DOI, venue, URL
+
+    Example:
+        >>> search_ieee(
+        ...     query="wireless sensor networks",
+        ...     max_results=10,
+        ...     year_from=2020
+        ... )
+
+    Note: Requires IEEE_API_KEY environment variable.
+    Get API key from: https://developer.ieee.org/
+    """
+    # Check if package is installed
+    # try:
+    #     from xploreapi import XPLORE
+    # except ImportError:
+    #     return "⚠️ xploreapi not installed. Install with: pip install xploreapi"
+
+    # Call internal function
+    try:
+        results = _search_ieee_internal(
+            query=query,
+            max_results=max_results,
+            year_from=year_from,
+            year_to=year_to
+        )
+    except Exception as e:
+        return f"❌ IEEE search failed: {str(e)}\n\nTroubleshooting:\n1. Set API key: export IEEE_API_KEY='your_key'\n2. Get API key from: https://developer.ieee.org/\n3. Verify query: {query}"
+
+    # Format as string for LLM
+    if not results:
+        return "No papers found in IEEE Xplore for the given query."
+
+    output = f"Found {len(results)} papers from IEEE Xplore:\n\n"
     for i, paper in enumerate(results, 1):
         output += f"--- PAPER {i} ---\n"
         output += format_paper_for_llm(paper)
@@ -604,3 +947,478 @@ def detect_academic_domains(query: str) -> List[str]:
     # For these domains, return empty list and let arXiv search handle it
 
     return list(set(domains))  # Remove duplicates
+
+
+# ===== Semantic Scholar Search (No API Key Required) =====
+
+# Global rate limiting tracker for Semantic Scholar
+_semantic_scholar_last_request = None
+_SEMANTIC_SCHOLAR_DELAY = 1.0  # 1 second between requests (conservative)
+
+def _search_semantic_scholar_internal(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> List[Dict]:
+    """
+    Internal Semantic Scholar search that returns List[Dict].
+
+    Uses the free Semantic Scholar API (no authentication required).
+    Rate limit: 100 requests per 5 minutes (without API key)
+
+    API docs: https://api.semanticscholar.org/api-docs/
+    """
+    global _semantic_scholar_last_request
+
+    try:
+        import requests
+        import time
+    except ImportError:
+        print("❌ requests library not available")
+        return []
+
+    # Rate limiting: Wait before making request
+    if _semantic_scholar_last_request is not None:
+        time_since_last = time.time() - _semantic_scholar_last_request
+        if time_since_last < _SEMANTIC_SCHOLAR_DELAY:
+            wait_time = _SEMANTIC_SCHOLAR_DELAY - time_since_last
+            time.sleep(wait_time)
+
+    try:
+        # Semantic Scholar search endpoint
+        base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+
+        # Build parameters - reduce max_results to be conservative
+        params = {
+            'query': query,
+            'limit': min(max_results, 10),  # Limit to 10 to reduce load
+            'fields': 'title,authors,year,abstract,citationCount,url,venue,externalIds'
+        }
+
+        # Add year filters
+        if year_from:
+            params['year'] = f"{year_from}-"
+        if year_to:
+            if year_from:
+                params['year'] = f"{year_from}-{year_to}"
+            else:
+                params['year'] = f"-{year_to}"
+
+        # Make request
+        response = requests.get(base_url, params=params, timeout=10)
+        _semantic_scholar_last_request = time.time()  # Update last request time
+
+        # Check for rate limit error (429)
+        if response.status_code == 429:
+            print(f"⚠️ Semantic Scholar rate limit hit - skipping this query")
+            return []
+
+        response.raise_for_status()
+
+        data = response.json()
+        papers_data = data.get('data', [])
+
+        # Parse results
+        results = []
+        for paper in papers_data:
+            # Get DOI from externalIds
+            external_ids = paper.get('externalIds', {}) or {}
+            doi = external_ids.get('DOI', '')
+
+            # Format authors
+            authors_list = paper.get('authors', [])
+            authors = ', '.join([a.get('name', '') for a in authors_list if a.get('name')])
+
+            results.append({
+                'title': paper.get('title', 'No title'),
+                'authors': authors if authors else 'Unknown',
+                'year': str(paper.get('year', 'N/A')),
+                'abstract': paper.get('abstract', 'No abstract available'),
+                'citations': paper.get('citationCount', 0),
+                'doi': doi,
+                'venue': paper.get('venue', 'N/A'),
+                'url': paper.get('url', ''),
+                'source': 'Semantic Scholar'
+            })
+
+        return results
+
+    except requests.exceptions.Timeout:
+        print(f"⚠️ Semantic Scholar API timeout for query: {query}")
+        return []
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ Semantic Scholar API error: {e}")
+        return []
+    except Exception as e:
+        print(f"⚠️ Unexpected error in Semantic Scholar search: {e}")
+        return []
+
+
+@tool(parse_docstring=True)
+def search_semantic_scholar(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> str:
+    """
+    Search Semantic Scholar for academic papers.
+
+    Free API - no authentication required. Covers papers from all disciplines.
+    Strong on CS/AI papers with citation graphs.
+
+    Args:
+        query: Search keywords
+        max_results: Number of results (default 10, max 100)
+        year_from: Filter papers from this year onwards
+        year_to: Filter papers up to this year
+
+    Returns:
+        List of papers with title, authors, year, abstract, citations, DOI, venue, URL
+
+    Example:
+        >>> search_semantic_scholar(
+        ...     query="large language models reasoning",
+        ...     max_results=10,
+        ...     year_from=2022
+        ... )
+
+    Note: Free API, no key required. Rate limit: ~100 requests/5min
+    """
+    try:
+        results = _search_semantic_scholar_internal(
+            query=query,
+            max_results=max_results,
+            year_from=year_from,
+            year_to=year_to
+        )
+    except Exception as e:
+        return f"❌ Semantic Scholar search failed: {str(e)}"
+
+    if not results:
+        return "No papers found in Semantic Scholar for the given query."
+
+    output = f"Found {len(results)} papers from Semantic Scholar:\n\n"
+    for i, paper in enumerate(results, 1):
+        output += f"--- PAPER {i} ---\n"
+        output += format_paper_for_llm(paper)
+        output += "\n" + "=" * 80 + "\n\n"
+
+    return output
+
+
+# ===== OpenAlex Search (No API Key Required) =====
+
+def _search_openalex_internal(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> List[Dict]:
+    """
+    Internal OpenAlex search that returns List[Dict].
+
+    OpenAlex is a free, open catalog of scholarly papers.
+    API docs: https://docs.openalex.org/
+    """
+    try:
+        import requests
+    except ImportError:
+        print("❌ requests library not available")
+        return []
+
+    try:
+        # OpenAlex works endpoint
+        base_url = "https://api.openalex.org/works"
+
+        # Build search query
+        params = {
+            'search': query,
+            'per_page': min(max_results, 100),
+            'mailto': 'research@example.com'  # Polite API usage
+        }
+
+        # Add year filters
+        filter_parts = []
+        if year_from:
+            filter_parts.append(f"from_publication_date:{year_from}-01-01")
+        if year_to:
+            filter_parts.append(f"to_publication_date:{year_to}-12-31")
+
+        if filter_parts:
+            params['filter'] = ','.join(filter_parts)
+
+        # Make request
+        response = requests.get(base_url, params=params, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        works = data.get('results', [])
+
+        # Parse results
+        results = []
+        for work in works:
+            # Get DOI
+            doi = work.get('doi', '')
+            if doi and doi.startswith('https://doi.org/'):
+                doi = doi.replace('https://doi.org/', '')
+
+            # Format authors
+            authorships = work.get('authorships', [])
+            authors = ', '.join([
+                a.get('author', {}).get('display_name', '')
+                for a in authorships[:5]  # Limit to first 5 authors
+            ])
+
+            # Get publication year
+            pub_year = work.get('publication_year', 'N/A')
+
+            # Get abstract from inverted index
+            abstract_inverted = work.get('abstract_inverted_index', {})
+            if abstract_inverted:
+                # Reconstruct abstract from inverted index
+                word_positions = []
+                for word, positions in abstract_inverted.items():
+                    for pos in positions:
+                        word_positions.append((pos, word))
+                word_positions.sort()
+                abstract = ' '.join([word for _, word in word_positions])
+            else:
+                abstract = 'No abstract available'
+
+            # Get venue
+            primary_location = work.get('primary_location', {}) or {}
+            source = primary_location.get('source', {}) or {}
+            venue = source.get('display_name', 'N/A')
+
+            results.append({
+                'title': work.get('title', 'No title'),
+                'authors': authors if authors else 'Unknown',
+                'year': str(pub_year),
+                'abstract': abstract[:500] if len(abstract) > 500 else abstract,  # Truncate long abstracts
+                'citations': work.get('cited_by_count', 0),
+                'doi': doi,
+                'venue': venue,
+                'url': work.get('id', ''),  # OpenAlex URL
+                'source': 'OpenAlex'
+            })
+
+        return results
+
+    except requests.exceptions.Timeout:
+        print(f"⚠️ OpenAlex API timeout for query: {query}")
+        return []
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ OpenAlex API error: {e}")
+        return []
+    except Exception as e:
+        print(f"⚠️ Unexpected error in OpenAlex search: {e}")
+        return []
+
+
+@tool(parse_docstring=True)
+def search_openalex(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> str:
+    """
+    Search OpenAlex for academic papers.
+
+    Free and open API - no authentication required. Comprehensive coverage
+    of scholarly works across all disciplines.
+
+    Args:
+        query: Search keywords
+        max_results: Number of results (default 10, max 100)
+        year_from: Filter papers from this year onwards
+        year_to: Filter papers up to this year
+
+    Returns:
+        List of papers with title, authors, year, abstract, citations, DOI, venue, URL
+
+    Example:
+        >>> search_openalex(
+        ...     query="graph neural networks",
+        ...     max_results=10,
+        ...     year_from=2020
+        ... )
+
+    Note: Free API, no key required. Very generous rate limits.
+    """
+    try:
+        results = _search_openalex_internal(
+            query=query,
+            max_results=max_results,
+            year_from=year_from,
+            year_to=year_to
+        )
+    except Exception as e:
+        return f"❌ OpenAlex search failed: {str(e)}"
+
+    if not results:
+        return "No papers found in OpenAlex for the given query."
+
+    output = f"Found {len(results)} papers from OpenAlex:\n\n"
+    for i, paper in enumerate(results, 1):
+        output += f"--- PAPER {i} ---\n"
+        output += format_paper_for_llm(paper)
+        output += "\n" + "=" * 80 + "\n\n"
+
+    return output
+
+
+# ===== CrossRef Search (No API Key Required) =====
+
+def _search_crossref_internal(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> List[Dict]:
+    """
+    Internal CrossRef search that returns List[Dict].
+
+    CrossRef is a DOI registration agency covering most published papers.
+    API docs: https://github.com/CrossRef/rest-api-doc
+    """
+    try:
+        import requests
+    except ImportError:
+        print("❌ requests library not available")
+        return []
+
+    try:
+        # CrossRef works endpoint
+        base_url = "https://api.crossref.org/works"
+
+        # Build parameters
+        params = {
+            'query': query,
+            'rows': min(max_results, 100),
+            'mailto': 'research@example.com'  # Polite API usage
+        }
+
+        # Add year filters
+        if year_from:
+            params['filter'] = f"from-pub-date:{year_from}"
+        if year_to:
+            if 'filter' in params:
+                params['filter'] += f",until-pub-date:{year_to}"
+            else:
+                params['filter'] = f"until-pub-date:{year_to}"
+
+        # Make request
+        response = requests.get(base_url, params=params, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        items = data.get('message', {}).get('items', [])
+
+        # Parse results
+        results = []
+        for item in items:
+            # Get DOI
+            doi = item.get('DOI', '')
+
+            # Format authors
+            authors_list = item.get('author', [])
+            authors = ', '.join([
+                f"{a.get('given', '')} {a.get('family', '')}"
+                for a in authors_list[:5]  # Limit to first 5
+            ])
+
+            # Get publication year
+            pub_date = item.get('published-print', item.get('published-online', {}))
+            date_parts = pub_date.get('date-parts', [[]])
+            year = str(date_parts[0][0]) if date_parts and date_parts[0] else 'N/A'
+
+            # Get abstract (often not available in CrossRef)
+            abstract = item.get('abstract', 'No abstract available')
+
+            # Get venue
+            container_title = item.get('container-title', [])
+            venue = container_title[0] if container_title else 'N/A'
+
+            # Get title
+            title_list = item.get('title', [])
+            title = title_list[0] if title_list else 'No title'
+
+            results.append({
+                'title': title,
+                'authors': authors.strip() if authors else 'Unknown',
+                'year': year,
+                'abstract': abstract,
+                'citations': item.get('is-referenced-by-count', 0),
+                'doi': doi,
+                'venue': venue,
+                'url': f"https://doi.org/{doi}" if doi else '',
+                'source': 'CrossRef'
+            })
+
+        return results
+
+    except requests.exceptions.Timeout:
+        print(f"⚠️ CrossRef API timeout for query: {query}")
+        return []
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ CrossRef API error: {e}")
+        return []
+    except Exception as e:
+        print(f"⚠️ Unexpected error in CrossRef search: {e}")
+        return []
+
+
+@tool(parse_docstring=True)
+def search_crossref(
+    query: str,
+    max_results: int = 10,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None
+) -> str:
+    """
+    Search CrossRef for academic papers.
+
+    Free API - no authentication required. CrossRef indexes DOIs for most
+    published scholarly content.
+
+    Args:
+        query: Search keywords
+        max_results: Number of results (default 10, max 100)
+        year_from: Filter papers from this year onwards
+        year_to: Filter papers up to this year
+
+    Returns:
+        List of papers with title, authors, year, DOI, venue, URL
+
+    Example:
+        >>> search_crossref(
+        ...     query="federated learning privacy",
+        ...     max_results=10,
+        ...     year_from=2021
+        ... )
+
+    Note: Free API, no key required. Good for finding DOIs and metadata.
+    """
+    try:
+        results = _search_crossref_internal(
+            query=query,
+            max_results=max_results,
+            year_from=year_from,
+            year_to=year_to
+        )
+    except Exception as e:
+        return f"❌ CrossRef search failed: {str(e)}"
+
+    if not results:
+        return "No papers found in CrossRef for the given query."
+
+    output = f"Found {len(results)} papers from CrossRef:\n\n"
+    for i, paper in enumerate(results, 1):
+        output += f"--- PAPER {i} ---\n"
+        output += format_paper_for_llm(paper)
+        output += "\n" + "=" * 80 + "\n\n"
+
+    return output

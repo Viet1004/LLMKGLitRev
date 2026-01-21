@@ -26,6 +26,11 @@ from llmkglitrev.agents.research_supervisor import create_interactive_supervisor
 from llmkglitrev.agents.research_planner import propose_research_plan, process_plan_approval
 from llmkglitrev.agents.academic_search_tools import (
     _search_arxiv_internal,
+    _search_scopus_internal,
+    _search_ieee_internal,
+    _search_semantic_scholar_internal,
+    _search_openalex_internal,
+    _search_crossref_internal,
     _deduplicate_papers
 )
 from typing import Union, List, Dict
@@ -65,54 +70,221 @@ async def format_question(state:AgentState):
 
 async def broad_literature_search(state: AgentState):
     """
-    Broad literature search using arXiv only.
+    Broad literature search using arXiv, Scopus, and IEEE.
 
-    Replaces Neo4j vector search with direct arXiv academic source search.
-    Returns 20-40 papers across multiple topics to give broad landscape.
+    Uses sophisticated search strategies:
+    - Boolean queries (AND/OR operators)
+    - Keyword combinations for broader coverage
+    - Multiple search patterns per database
+
+    Searches multiple academic databases to provide comprehensive coverage.
+    Returns 30-90 papers across multiple search strategies.
     """
     keywords = state.get('research_keywords', [])
     research_topic = state.get('research_topic', '')
 
-    print(f"\n🔍 Broad Literature Search (arXiv)")
-    print(f"   Keywords: {', '.join(keywords[:5])}")
+    print(f"\n🔍 Broad Literature Search (arXiv + Scopus + IEEE)")
+    print(f"   Keywords: {', '.join(keywords[:7])}")
     print("="*70)
 
     try:
         all_papers = []
 
-        # Search using top 3 keywords
-        search_terms = keywords[:3] if len(keywords) >= 3 else [research_topic]
+        # Construct sophisticated search queries
+        # Strategy 1: Core concept combinations (AND operator)
+        # Strategy 2: Alternative approaches (OR operator)
+        # Strategy 3: Specific methods within domain
 
-        for i, keyword in enumerate(search_terms, 1):
-            print(f"\n📚 Search {i}/{len(search_terms)}: '{keyword}'")
+        search_queries = []
 
-            # arXiv search only
+        if len(keywords) >= 3:
+            # Strategy 1: Primary keywords combined with AND (precise, focused)
+            search_queries.append({
+                'query': f"{keywords[0]} AND {keywords[1]}",
+                'description': f"Core concept: {keywords[0]} + {keywords[1]}",
+                'strategy': 'focused'
+            })
+
+            # Strategy 2: Broader search with OR (captures variations)
+            if len(keywords) >= 4:
+                search_queries.append({
+                    'query': f"({keywords[0]} OR {keywords[1]}) AND {keywords[2]}",
+                    'description': f"Broader: ({keywords[0]} OR {keywords[1]}) + {keywords[2]}",
+                    'strategy': 'broad'
+                })
+
+            # Strategy 3: Method-focused search
+            if len(keywords) >= 5:
+                search_queries.append({
+                    'query': f"{keywords[0]} AND ({keywords[3]} OR {keywords[4]})",
+                    'description': f"Method-focused: {keywords[0]} + ({keywords[3]} OR {keywords[4]})",
+                    'strategy': 'method'
+                })
+
+            # Strategy 4: Alternative primary concepts
+            if len(keywords) >= 3:
+                search_queries.append({
+                    'query': f"{keywords[2]}",
+                    'description': f"Alternative approach: {keywords[2]}",
+                    'strategy': 'alternative'
+                })
+        else:
+            # Fallback: use research topic
+            search_queries = [{
+                'query': research_topic,
+                'description': f"Main topic: {research_topic}",
+                'strategy': 'fallback'
+            }]
+
+        print(f"\n📋 Constructed {len(search_queries)} search strategies:")
+        for idx, sq in enumerate(search_queries, 1):
+            print(f"   {idx}. [{sq['strategy']}] {sq['description']}")
+        print()
+
+        # Execute searches across all databases with error handling
+        # Track which sources succeeded/failed
+        source_stats = {
+            'arxiv': {'success': 0, 'failed': 0, 'papers': 0},
+            'semantic_scholar': {'success': 0, 'failed': 0, 'papers': 0},
+            'openalex': {'success': 0, 'failed': 0, 'papers': 0},
+            'crossref': {'success': 0, 'failed': 0, 'papers': 0},
+            'scopus': {'success': 0, 'failed': 0, 'papers': 0},
+            'ieee': {'success': 0, 'failed': 0, 'papers': 0}
+        }
+
+        for i, search_item in enumerate(search_queries, 1):
+            query = search_item['query']
+            description = search_item['description']
+
+            print(f"\n📚 Search {i}/{len(search_queries)}: {description}")
+            print(f"   Query: '{query}'")
+
+            # arXiv search
             print("   🔎 Searching arXiv...")
-            arxiv_papers = _search_arxiv_internal(
-                query=keyword,
-                max_results=15,  # Increased from 10 since we're only using arXiv
-                date_from="2018-01-01"
-            )
-            print(f"      Found {len(arxiv_papers)} papers")
-            all_papers.extend(arxiv_papers)
+            try:
+                arxiv_papers = _search_arxiv_internal(
+                    query=query,
+                    max_results=10,
+                    date_from="2018-01-01"
+                )
+                print(f"      ✅ Found {len(arxiv_papers)} papers")
+                all_papers.extend(arxiv_papers)
+                source_stats['arxiv']['success'] += 1
+                source_stats['arxiv']['papers'] += len(arxiv_papers)
+            except Exception as e:
+                print(f"      ❌ arXiv search failed: {str(e)}")
+                source_stats['arxiv']['failed'] += 1
+
+            # Semantic Scholar search (free, no API key)
+            print("   🔎 Searching Semantic Scholar...")
+            try:
+                ss_papers = _search_semantic_scholar_internal(
+                    query=query,
+                    max_results=10,
+                    year_from=2018
+                )
+                print(f"      ✅ Found {len(ss_papers)} papers")
+                all_papers.extend(ss_papers)
+                source_stats['semantic_scholar']['success'] += 1
+                source_stats['semantic_scholar']['papers'] += len(ss_papers)
+            except Exception as e:
+                print(f"      ❌ Semantic Scholar search failed: {str(e)}")
+                source_stats['semantic_scholar']['failed'] += 1
+
+            # OpenAlex search (free, no API key)
+            print("   🔎 Searching OpenAlex...")
+            try:
+                oa_papers = _search_openalex_internal(
+                    query=query,
+                    max_results=10,
+                    year_from=2018
+                )
+                print(f"      ✅ Found {len(oa_papers)} papers")
+                all_papers.extend(oa_papers)
+                source_stats['openalex']['success'] += 1
+                source_stats['openalex']['papers'] += len(oa_papers)
+            except Exception as e:
+                print(f"      ❌ OpenAlex search failed: {str(e)}")
+                source_stats['openalex']['failed'] += 1
+
+            # CrossRef search (free, no API key)
+            print("   🔎 Searching CrossRef...")
+            try:
+                cr_papers = _search_crossref_internal(
+                    query=query,
+                    max_results=10,
+                    year_from=2018
+                )
+                print(f"      ✅ Found {len(cr_papers)} papers")
+                all_papers.extend(cr_papers)
+                source_stats['crossref']['success'] += 1
+                source_stats['crossref']['papers'] += len(cr_papers)
+            except Exception as e:
+                print(f"      ❌ CrossRef search failed: {str(e)}")
+                source_stats['crossref']['failed'] += 1
+
+            # # Scopus search (requires API key)
+            # print("   🔎 Searching Scopus...")
+            # try:
+            #     scopus_papers = _search_scopus_internal(
+            #         query=query,
+            #         max_results=10,
+            #         year_from=2018
+            #     )
+            #     print(f"      ✅ Found {len(scopus_papers)} papers")
+            #     all_papers.extend(scopus_papers)
+            #     source_stats['scopus']['success'] += 1
+            #     source_stats['scopus']['papers'] += len(scopus_papers)
+            # except Exception as e:
+            #     print(f"      ⚠️ Scopus search failed: {str(e)}")
+            #     print(f"         (Scopus requires API key and institutional access)")
+            #     source_stats['scopus']['failed'] += 1
+
+            # IEEE search (requires API key)
+            # print("   🔎 Searching IEEE Xplore...")
+            # try:
+            #     ieee_papers = _search_ieee_internal(
+            #         query=query,
+            #         max_results=10,
+            #         year_from=2018
+            #     )
+            #     print(f"      ✅ Found {len(ieee_papers)} papers")
+            #     all_papers.extend(ieee_papers)
+            #     source_stats['ieee']['success'] += 1
+            #     source_stats['ieee']['papers'] += len(ieee_papers)
+            # except Exception as e:
+            #     print(f"      ⚠️ IEEE search failed: {str(e)}")
+            #     print(f"         (IEEE requires API key)")
+            #     source_stats['ieee']['failed'] += 1
+
+        # Print source statistics
+        print(f"\n📊 Search Source Statistics:")
+        print("=" * 70)
+        for source, stats in source_stats.items():
+            total_attempts = stats['success'] + stats['failed']
+            if total_attempts > 0:
+                status = "✅" if stats['failed'] == 0 else "⚠️" if stats['success'] > 0 else "❌"
+                print(f"   {status} {source:20s}: {stats['success']}/{total_attempts} successful, {stats['papers']} papers")
+        print("=" * 70)
 
         # Deduplicate papers
         print(f"\n🔄 Deduplicating {len(all_papers)} total papers...")
         unique_papers = _deduplicate_papers(all_papers)
-
+        print(unique_papers[:5])
+        print(type(unique_papers[0]))
         # Sort by relevance (citations + recency)
-        unique_papers.sort(
-            key=lambda x: (
-                x.get("citations", 0),
-                x.get("year", 0),
-                x.get("relevance_score", 0)
-            ),
-            reverse=True
-        )
+        # unique_papers.sort(
+        #     key=lambda x: (
+        #         x.get("citations", 0),
+        #         x.get("year", 0),
+        #         x.get("relevance_score", 0)
+        #     ),
+        #     reverse=True
+        # )
 
         # Extract topics from papers
         print(f"\n🏷️  Extracting topics from {len(unique_papers)} papers...")
-        topics = await extract_topics_from_papers(unique_papers[:20])  # Use top 20 for topic extraction
+        topics = await extract_topics_from_papers(unique_papers)  # Use top 20 for topic extraction
 
         # Cluster papers by topic
         print(f"📊 Clustering papers into {len(topics)} topics...")
@@ -164,8 +336,8 @@ async def extract_topics_from_papers(papers: List[Dict]) -> List[str]:
     # Prepare paper summaries
     paper_summaries = []
     for i, paper in enumerate(papers[:20], 1):  # Use top 20 papers
-        title = paper.get("title", "")
-        abstract = paper.get("abstract", "")[:200]  # First 200 chars
+        title = (paper.get("title") or " ")
+        abstract = (paper.get("abstract") or " ")[:200]  # First 200 chars
         paper_summaries.append(f"{i}. {title}\n   Abstract: {abstract}...")
 
     papers_text = "\n\n".join(paper_summaries)
@@ -213,8 +385,8 @@ def cluster_papers_by_topic(papers: List[Dict], topics: List[str]) -> Dict[str, 
     topic_papers = {topic: [] for topic in topics}
 
     for paper in papers:
-        title = paper.get("title", "").lower()
-        abstract = paper.get("abstract", "").lower()
+        title = (paper.get("title") or " ").lower()
+        abstract = (paper.get("abstract") or " ").lower()
         paper_text = f"{title} {abstract}"
 
         # Find best matching topic

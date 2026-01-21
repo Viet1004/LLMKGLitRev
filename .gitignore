@@ -147,3 +147,7 @@ src/llmkglitrev/MCPServer/
 
 # UV lock file (regenerated locally, not for Streamlit Cloud)
 uv.lock
+
+# Pybliometrics config and cache (generated at runtime, may contain API keys)
+.pybliometrics/
+.cache/pybliometrics/

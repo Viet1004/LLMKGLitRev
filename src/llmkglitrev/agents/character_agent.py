@@ -43,7 +43,9 @@ class CharacterBasedResearchAgent:
         session_id: Optional[str] = None,
         model_name: Optional[str] = None,
         assigned_topic: Optional[str] = None,
-        seed_papers: Optional[List[Dict]] = None
+        seed_papers: Optional[List[Dict]] = None,
+        preferred_databases: Optional[List[str]] = None,
+        preferred_venues: Optional[List[str]] = None
     ):
         """
         Initialize character-based research agent.
@@ -55,6 +57,8 @@ class CharacterBasedResearchAgent:
             model_name: Optional LLM model name (defaults to character's preference or deepseek)
             assigned_topic: Optional specific topic from broad search (NEW)
             seed_papers: Optional seed papers from broad search for deep research (NEW)
+            preferred_databases: Optional list of databases to prioritize (NEW)
+            preferred_venues: Optional list of venues to prioritize (NEW)
         """
         self.character = character
         self.literature = literature_subset or []
@@ -62,6 +66,8 @@ class CharacterBasedResearchAgent:
         self.assigned_topic = assigned_topic or ""
         self.seed_papers = seed_papers or []
         self.papers_read = []  # Track papers read during deep research
+        self.preferred_databases = preferred_databases or character.preferred_databases
+        self.preferred_venues = preferred_venues or character.typical_venues
 
         # Build system prompt from character template
         self.system_prompt = self._build_system_prompt()
@@ -85,6 +91,15 @@ class CharacterBasedResearchAgent:
             Formatted system prompt
         """
         if not self.character.system_prompt_template:
+            # Build database preferences string
+            db_names = {"arxiv": "arXiv", "scopus": "Scopus", "ieee": "IEEE Xplore"}
+            db_list = ", ".join([db_names.get(db, db) for db in self.preferred_databases])
+
+            # Build venue preferences string
+            venue_str = ""
+            if self.preferred_venues:
+                venue_str = f"\n- **Preferred Venues**: Focus on papers from: {', '.join(self.preferred_venues[:5])}"
+
             # Fallback to basic prompt if no template provided
             return f"""You are {self.character.name}, a research expert in {self.character.domain}.
 
@@ -93,8 +108,10 @@ class CharacterBasedResearchAgent:
 Your role is to conduct focused research and provide {self.character.stance} feedback on research proposals.
 
 When conducting research:
-- **PRIORITIZE ACADEMIC SOURCES**: Focus on peer-reviewed papers from IEEE, Springer, ACM, arXiv, Nature, Science, and other scholarly publishers
-- Use tavily_search to find relevant academic literature (the system is configured to prioritize academic sources)
+- **PRIORITIZE ACADEMIC SOURCES**: Focus on peer-reviewed papers from scholarly publishers
+- **Preferred Databases**: Prioritize searching {db_list} for papers in your domain{venue_str}
+- Use search_arxiv, search_scopus, or search_ieee tools based on your database preferences
+- Use tavily_search to find additional academic literature and context
 - Cite specific papers, methodologies, and results from academic publications
 - Use evaluation_tool to reflect on findings
 - Note assumptions, methodological choices, and limitations based on published research

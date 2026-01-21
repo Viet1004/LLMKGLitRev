@@ -308,9 +308,11 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                         # Get character for this agent (cycle through if more calls than characters)
                         char_dict = active_characters[i % len(active_characters)]
 
-                        # Extract topic and seed papers (NEW)
+                        # Extract topic, seed papers, and search preferences (NEW)
                         assigned_topic = char_dict.get("assigned_topic", "")
                         seed_papers = char_dict.get("seed_papers", [])
+                        preferred_databases = char_dict.get("preferred_databases", ["arxiv", "scopus", "ieee"])
+                        preferred_venues = char_dict.get("preferred_venues", [])
 
                         # Convert dict back to ResearchCharacter
                         character = ResearchCharacter.model_validate(char_dict)
@@ -318,6 +320,9 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                         if assigned_topic:
                             print(f"         🎯 Topic: {assigned_topic}")
                             print(f"         📄 Seed papers: {len(seed_papers)}")
+                        print(f"         🔍 Databases: {', '.join(preferred_databases)}")
+                        if preferred_venues:
+                            print(f"         📚 Venues: {', '.join(preferred_venues[:3])}...")
 
                         # Partition literature for this domain
                         retrieved_papers = state.get("retrieved_papers", [])
@@ -327,13 +332,15 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                             or character.domain.lower() in paper.get("abstract", "").lower()
                         ]
 
-                        # Create character agent with topic and seed papers (NEW)
+                        # Create character agent with topic, seed papers, and search preferences (NEW)
                         agent = CharacterBasedResearchAgent(
                             character=character,
                             literature_subset=literature_subset,
                             session_id=session_id,
                             assigned_topic=assigned_topic,
-                            seed_papers=seed_papers
+                            seed_papers=seed_papers,
+                            preferred_databases=preferred_databases,
+                            preferred_venues=preferred_venues
                         )
 
                         character_agents.append((agent, tool_call))

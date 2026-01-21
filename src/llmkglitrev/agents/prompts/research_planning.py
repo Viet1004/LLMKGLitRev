@@ -26,6 +26,8 @@ For each proposed agent, provide:
 - **recommended_character**: ID of an existing character template to use (or "custom" if none fit)
 - **stance**: "critical", "constructive", or "neutral"
 - **search_scope**: Keywords and topics this agent should focus on
+- **preferred_databases**: List of databases to search from ["arxiv", "scopus", "ieee"]. Choose based on domain (e.g., CS prefers arxiv, Engineering prefers IEEE, Medical/Science prefers Scopus)
+- **preferred_venues**: List of 3-5 key conferences/journals for this domain (e.g., ["NeurIPS", "ICML"], ["IEEE CVPR", "IEEE TPAMI"], ["Nature Medicine", "Lancet"])
 - **rationale**: Why this agent is needed for this research topic (2-3 sentences)
 - **custom_config**: If recommended_character is "custom", provide character configuration
 

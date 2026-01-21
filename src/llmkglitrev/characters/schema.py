@@ -35,8 +35,14 @@ class ResearchCharacter(BaseModel):
     # Field-Specific Knowledge
     typical_venues: List[str] = Field(
         default_factory=list,
-        description="Common publication venues for this domain",
-        examples=[["NeurIPS", "ICML", "ICLR", "CVPR"]]
+        description="Common publication venues for this domain (conferences and journals)",
+        examples=[["NeurIPS", "ICML", "ICLR", "CVPR", "IEEE TPAMI", "Nature Machine Intelligence"]]
+    )
+
+    preferred_databases: List[Literal["arxiv", "scopus", "ieee"]] = Field(
+        default_factory=lambda: ["arxiv", "scopus", "ieee"],
+        description="Preferred academic databases to search",
+        examples=[["arxiv", "scopus"], ["ieee", "scopus"], ["arxiv", "ieee", "scopus"]]
     )
 
     typical_methods: List[str] = Field(

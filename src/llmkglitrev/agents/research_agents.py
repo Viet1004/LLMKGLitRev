@@ -14,7 +14,9 @@ from llmkglitrev.agents.tools import tavily_search, get_today_str, evaluation_to
 from llmkglitrev.agents.academic_search_tools import (
     search_academic_papers,
     search_google_scholar,
-    search_arxiv
+    search_arxiv,
+    search_ieee,
+    search_scopus,
 )
 
 from llmkglitrev.agents.prompts.research_summary import research_agent_prompt
