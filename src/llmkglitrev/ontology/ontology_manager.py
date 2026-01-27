@@ -150,6 +150,33 @@ class DomainOntologyManager:
 
         return None
 
+    def get_concept_label(self, concept_name: str) -> str:
+        """
+        Get human-readable label for a concept.
+
+        Args:
+            concept_name: The concept class name (e.g., 'data_id')
+
+        Returns:
+            Human-readable label (e.g., 'Data identifier') or the original name if no label found
+        """
+        concept = self.find_concept(concept_name)
+
+        if not concept:
+            # Fallback: convert underscores to spaces and title case
+            return concept_name.replace('_', ' ').title()
+
+        # Try to get rdfs:label
+        if hasattr(concept, 'label') and concept.label:
+            # Labels are stored as list in owlready2
+            if isinstance(concept.label, list) and len(concept.label) > 0:
+                return concept.label[0]
+            elif isinstance(concept.label, str):
+                return concept.label
+
+        # Fallback: use the name with formatting
+        return concept_name.replace('_', ' ').title()
+
     def find_related_concepts(
         self,
         term: str,
@@ -642,6 +669,129 @@ class DomainOntologyManager:
         results.sort(key=lambda x: x["similarity"], reverse=True)
 
         return results[:max_results]
+
+    def build_concept_tree(self, concepts: List[str]) -> Dict:
+        """
+        Build hierarchical tree structure from flat list of concepts.
+
+        Args:
+            concepts: List of concept names to build tree from
+
+        Returns:
+            Tree structure with levels (0=root, 1=general, 2=specific, ...)
+        """
+        if not self.ontology:
+            return {}
+
+        # Find root concepts (those with no parents in the concept list)
+        roots = []
+
+        for concept in concepts:
+            parents = self._get_parent_concepts(concept)
+            has_parent_in_list = any(p in concepts for p in parents)
+
+            if not has_parent_in_list:
+                roots.append(concept)
+
+        # Build tree recursively
+        tree = {
+            "name": "Research Concepts",
+            "children": [self._build_subtree(root, concepts, level=0) for root in roots]
+        }
+
+        return tree
+
+    def _build_subtree(self, concept: str, all_concepts: List[str], level: int) -> Dict:
+        """Recursively build subtree for a concept."""
+        children = self._get_child_concepts(concept)
+        child_nodes = [
+            self._build_subtree(child, all_concepts, level + 1)
+            for child in children
+            if child in all_concepts
+        ]
+
+        return {
+            "name": concept,
+            "level": level,
+            "children": child_nodes
+        }
+
+    def _get_parent_concepts(self, concept_name: str) -> List[str]:
+        """Get parent concepts (superclasses) for a concept."""
+        concept = self.find_concept(concept_name)
+        if not concept:
+            return []
+
+        from owlready2 import ThingClass
+        parents = [
+            p.name for p in concept.is_a
+            if isinstance(p, ThingClass) and p.name != 'Thing'
+        ]
+        return parents
+
+    def _get_child_concepts(self, concept_name: str) -> List[str]:
+        """Get child concepts (subclasses) for a concept."""
+        concept = self.find_concept(concept_name)
+        if not concept:
+            return []
+
+        children = [c.name for c in concept.subclasses()]
+        return children
+
+    def get_top_level_parent(self, concept_name: str) -> str:
+        """
+        Get the top-level parent for clustering.
+
+        Args:
+            concept_name: Concept to find top parent for
+
+        Returns:
+            Name of top-level parent concept
+        """
+        parents = self._get_parent_concepts(concept_name)
+
+        if not parents:
+            return concept_name
+
+        # Recursively find top parent
+        for parent in parents:
+            grandparents = self._get_parent_concepts(parent)
+            if grandparents:
+                return self.get_top_level_parent(parent)
+
+        return parents[0] if parents else concept_name
+
+    def _find_relationship_type(self, concept1: str, concept2: str) -> str:
+        """
+        Determine relationship type between two concepts.
+
+        Args:
+            concept1: First concept name
+            concept2: Second concept name
+
+        Returns:
+            Relationship type string
+        """
+        c1 = self.find_concept(concept1)
+        c2 = self.find_concept(concept2)
+
+        if not c1 or not c2:
+            return "related"
+
+        from owlready2 import ThingClass
+
+        # Check if c1 is subclass of c2
+        c2_parents = [p for p in c1.is_a if isinstance(p, ThingClass)]
+        if c2 in c2_parents:
+            return "is_a"
+
+        # Check if c1 is superclass of c2
+        c1_parents = [p for p in c2.is_a if isinstance(p, ThingClass)]
+        if c1 in c1_parents:
+            return "is_a"
+
+        # Default to related
+        return "related"
 
     def __repr__(self) -> str:
         """String representation."""

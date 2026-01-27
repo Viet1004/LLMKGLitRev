@@ -13,6 +13,8 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from typing import Literal, Optional
 from langgraph.graph import MessagesState
+from llmkglitrev.characters.schema import ResearchCharacter
+
 # ===== STATE DEFINITIONS =====
 
 class ResearcherState(TypedDict):
@@ -113,23 +115,15 @@ class ResearchSummary(BaseModel):
 # NEW: Schemas for dynamic research agent planning
 
 class AgentProposal(BaseModel):
-    """Schema for a single proposed research agent."""
+    """
+    Schema for a single proposed research agent with embedded character.
 
-    domain: str = Field(
-        description="Domain of expertise for this agent (e.g., 'Machine Learning', 'Medical Imaging')",
-        min_length=3,
-        max_length=100,
-        examples=["Machine Learning", "Medical Imaging", "Ethics and Society"]
-    )
+    The character object contains all details (name, domain, expertise, venues, etc.)
+    so no character file lookup is needed.
+    """
 
-    recommended_character: str = Field(
-        description="ID of existing character template to use, or 'custom' for new configuration",
-        examples=["ml_expert_critical", "medical_imaging_constructive", "custom"]
-    )
-
-    stance: Literal["critical", "constructive", "neutral"] = Field(
-        description="The agent's perspective: critical (skeptical), constructive (supportive), or neutral (balanced)",
-        examples=["critical", "constructive", "neutral"]
+    character: ResearchCharacter = Field(
+        description="Complete character profile with name, domain, expertise, typical venues, and preferences"
     )
 
     search_scope: List[str] = Field(
@@ -139,29 +133,11 @@ class AgentProposal(BaseModel):
         examples=[["deep learning", "transfer learning", "few-shot learning"]]
     )
 
-    preferred_databases: List[Literal["arxiv", "scopus", "ieee"]] = Field(
-        default_factory=lambda: ["arxiv", "scopus", "ieee"],
-        description="Preferred academic databases for this agent to search",
-        examples=[["arxiv", "scopus"], ["ieee", "scopus"]]
-    )
-
-    preferred_venues: List[str] = Field(
-        default_factory=list,
-        description="Specific conferences and journals to prioritize (e.g., 'NeurIPS', 'IEEE TPAMI', 'Nature')",
-        max_length=10,
-        examples=[["NeurIPS", "ICML", "ICLR"], ["IEEE CVPR", "IEEE TPAMI"], ["Nature", "Science"]]
-    )
-
     rationale: str = Field(
         description="Explanation for why this agent is needed (2-3 sentences)",
         min_length=50,
         max_length=1000,
         examples=["This agent will evaluate the algorithmic approaches from a critical ML perspective, identifying potential overfitting issues and generalization challenges."]
-    )
-
-    custom_config: Optional[dict] = Field(
-        default=None,
-        description="Custom character configuration if recommended_character is 'custom'"
     )
 
 

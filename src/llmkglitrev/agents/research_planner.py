@@ -11,7 +11,7 @@ from langchain.chat_models import init_chat_model
 
 from llmkglitrev.agents.states import AgentState, ResearchPlan, AgentProposal
 from llmkglitrev.agents.prompts.research_planning import propose_agents_prompt
-from llmkglitrev.characters import CharacterManager
+from llmkglitrev.characters.schema import ResearchCharacter
 
 
 # Use a capable model for strategic planning
@@ -49,59 +49,44 @@ async def propose_research_plan(state: AgentState) -> Dict[str, Any]:
     print("📋 PROPOSING RESEARCH PLAN")
     print("="*70)
     print(f"\n📝 Research Topic: {research_topic}")
-    print(f"📚 Retrieved {len(broad_papers)} papers from arXiv")
+    print(f"📚 Retrieved {len(broad_papers)} papers from literature search")
     print(f"🏷️  Identified {len(topics)} topics: {', '.join(topics)}")
 
-    # Load available character templates
-    char_manager = CharacterManager()
-    available_chars = char_manager.list_characters()
-
-    # Format character list for LLM
-    char_descriptions = []
-    for char in available_chars:
-        char_descriptions.append(
-            f"- **{char['id']}**: {char['name']} ({char['domain']}, {char['stance']} stance)"
-        )
-    available_characters_str = "\n".join(char_descriptions)
-
-    print(f"\n🎭 Available character templates: {len(available_chars)}")
-
-    # Generate research plan using LLM
-    print("\n🤔 Analyzing topics and proposing agent configuration...")
+    # Generate research plan using LLM - characters will be generated dynamically
+    print("\n🤔 Analyzing topics and generating specialized research characters...")
 
     # Format topics for prompt
     topics_str = "\n".join([f"{i+1}. {topic}" for i, topic in enumerate(topics)])
 
-    # Add topic information to prompt
-    prompt_with_topics = f"""
+    # Build prompt with topic information
+    prompt = f"""
 Based on broad literature search, we identified these research topics:
 
 {topics_str}
 
-Each topic should be assigned to a different domain expert character.
+Each topic should be covered by a specialized research character with appropriate expertise.
 
 {propose_agents_prompt.format(
     research_topic=research_topic,
-    literature_context=literature_context[:3000],
-    available_characters=available_characters_str
+    literature_context=literature_context[:3000]
 )}
 """
-
-    prompt = prompt_with_topics
 
     try:
         research_plan: ResearchPlan = await planning_model.ainvoke(prompt)
 
         print("\n✅ Research plan generated!")
         print(f"\n🎯 Strategy: {research_plan.research_strategy}")
-        print(f"\n👥 Proposed {len(research_plan.proposed_agents)} agents:")
+        print(f"\n👥 Generated {len(research_plan.proposed_agents)} specialized characters:")
 
         for i, agent in enumerate(research_plan.proposed_agents, 1):
-            print(f"\n  Agent {i}: {agent.domain} ({agent.stance})")
-            print(f"    Template: {agent.recommended_character}")
-            print(f"    Focus: {', '.join(agent.search_scope[:3])}...")
-            print(f"    Databases: {', '.join(agent.preferred_databases)}")
-            print(f"    Venues: {', '.join(agent.preferred_venues[:3]) if agent.preferred_venues else 'N/A'}")
+            char = agent.character
+            print(f"\n  Agent {i}: {char.name}")
+            print(f"    Domain: {char.domain} ({char.stance} stance)")
+            print(f"    Expertise: {', '.join(char.expertise_areas[:3])}...")
+            print(f"    Venues: {', '.join(char.typical_venues[:3])}...")
+            print(f"    Databases: {', '.join(char.preferred_databases)}")
+            print(f"    Search: {', '.join(agent.search_scope[:3])}...")
             print(f"    Rationale: {agent.rationale[:100]}...")
 
         # Convert to dict for JSON serialization
@@ -110,18 +95,26 @@ Each topic should be assigned to a different domain expert character.
         # Assign topics and seed papers to each agent
         # Match agents to topics (1-to-1 mapping)
         for i, agent in enumerate(plan_dict["proposed_agents"]):
-            # Assign topic (round-robin if more agents than topics)
-            topic_idx = i % len(topics) if topics else 0
-            assigned_topic = topics[topic_idx] if topics else research_topic
+            # Get character info for better topic assignment
+            char = agent.get("character", {})
+            char_domain = char.get("domain", "")
 
-            # Get seed papers for this topic
-            seed_papers = topic_papers.get(assigned_topic, [])[:5]  # Max 5 seed papers per agent
+            # Assign topic (round-robin if more agents than topics)
+            if topics:
+                topic_idx = i % len(topics)
+                assigned_topic = topics[topic_idx]
+                # Get seed papers for this topic
+                seed_papers = topic_papers.get(assigned_topic, [])[:5]
+            else:
+                # No topics from literature search - use character's domain as topic
+                assigned_topic = char_domain
+                seed_papers = []
 
             # Add to agent config
             agent["assigned_topic"] = assigned_topic
             agent["seed_papers"] = seed_papers
 
-            print(f"\n  📌 Agent {i+1} assigned to topic: {assigned_topic}")
+            print(f"\n  📌 Agent {i+1} ({char.get('name', 'Unknown')}) assigned to topic: {assigned_topic}")
             print(f"     📄 Seed papers: {len(seed_papers)}")
 
         print("\n" + "="*70)
@@ -146,26 +139,50 @@ Each topic should be assigned to a different domain expert character.
         import traceback
         traceback.print_exc()
 
-        # Return a fallback plan if LLM fails
+        # Return a fallback plan if LLM fails - create generic characters
+        fallback_char_1 = ResearchCharacter(
+            character_id="fallback_researcher_1",
+            name="General Research Analyst",
+            domain="Research Analysis",
+            stance="neutral",
+            expertise_areas=["Literature review", "Research methods", "Data analysis"],
+            typical_venues=["arXiv", "General conferences"],
+            preferred_databases=["arxiv", "semantic_scholar", "openalex"],
+            background="General research expert for broad topic analysis",
+            communication_style="Balanced and analytical",
+            description="Fallback research character for general analysis",
+            sub_domains=["Research methods", "Analysis"]
+        )
+
+        fallback_char_2 = ResearchCharacter(
+            character_id="fallback_researcher_2",
+            name="Applied Research Expert",
+            domain="Applied Research",
+            stance="constructive",
+            expertise_areas=["Practical applications", "Case studies", "Implementation"],
+            typical_venues=["Applied conferences", "Practical journals"],
+            preferred_databases=["scopus", "crossref"],
+            background="Expert in practical research applications",
+            communication_style="Pragmatic and application-focused",
+            description="Fallback character for applied research",
+            sub_domains=["Applications", "Implementation"]
+        )
+
         fallback_plan = {
-            "research_strategy": "Use default character templates for multi-perspective research",
+            "research_strategy": "Use generic research analysts for multi-perspective exploration",
             "proposed_agents": [
                 {
-                    "domain": "Machine Learning",
-                    "recommended_character": "ml_expert_critical",
-                    "stance": "critical",
-                    "search_scope": ["machine learning", "algorithms"],
-                    "rationale": "Provides critical analysis of ML approaches"
+                    "character": fallback_char_1.model_dump(),
+                    "search_scope": ["research", "analysis", research_topic],
+                    "rationale": "Provides general analytical perspective on the research topic"
                 },
                 {
-                    "domain": "Applied Research",
-                    "recommended_character": "medical_imaging_constructive",
-                    "stance": "constructive",
-                    "search_scope": ["applications", "case studies"],
-                    "rationale": "Explores practical applications"
+                    "character": fallback_char_2.model_dump(),
+                    "search_scope": ["applications", "implementation", research_topic],
+                    "rationale": "Explores practical applications and real-world relevance"
                 }
             ],
-            "interdisciplinary_connections": "Agents will collaborate on technical and practical aspects"
+            "interdisciplinary_connections": "Agents will collaborate on theoretical and practical aspects"
         }
 
         print("\n" + "="*70)
@@ -212,31 +229,31 @@ def process_plan_approval(state: AgentState) -> Dict[str, Any]:
     num_agents_in_plan = len(proposed_plan.get("proposed_agents", []))
     print(f"\n🔍 DEBUG: Received plan with {num_agents_in_plan} agents in state")
     for idx, agent in enumerate(proposed_plan.get("proposed_agents", []), 1):
-        print(f"   Agent {idx}: {agent.get('domain', 'Unknown')} ({agent.get('recommended_character', 'Unknown')})")
-
-    # For now, we'll mark as approved
-    # The interactive_runner will handle parsing feedback
-    # and potentially modifying the plan before resuming
+        char = agent.get('character', {})
+        print(f"   Agent {idx}: {char.get('name', 'Unknown')} - {char.get('domain', 'Unknown')}")
 
     # Extract character configurations from approved plan
+    # Characters are now embedded in each agent proposal
     character_configs = []
 
     for agent_proposal in proposed_plan.get("proposed_agents", []):
+        # Get the embedded character
+        character = agent_proposal.get("character", {})
+
         char_config = {
-            "domain": agent_proposal["domain"],
-            "character_id": agent_proposal["recommended_character"],
-            "stance": agent_proposal["stance"],
-            "search_scope": agent_proposal["search_scope"],
-            "assigned_topic": agent_proposal.get("assigned_topic", ""),  # NEW: Topic from broad search
-            "seed_papers": agent_proposal.get("seed_papers", []),  # NEW: Seed papers for this topic
-            "custom_config": agent_proposal.get("custom_config")
+            "character": character,  # Full character object embedded
+            "search_scope": agent_proposal.get("search_scope", []),
+            "assigned_topic": agent_proposal.get("assigned_topic", ""),  # Topic from broad search
+            "seed_papers": agent_proposal.get("seed_papers", []),  # Seed papers for this topic
+            "rationale": agent_proposal.get("rationale", "")
         }
         character_configs.append(char_config)
 
     print(f"\n✅ Plan approved with {len(character_configs)} agents")
     print("\n🔍 DEBUG: Final character_configs:")
     for idx, config in enumerate(character_configs, 1):
-        print(f"   Config {idx}: {config['domain']} ({config['character_id']})")
+        char = config['character']
+        print(f"   Config {idx}: {char.get('name', 'Unknown')} ({char.get('domain', 'Unknown')})")
 
     # CRITICAL FIX: Return the proposed_research_plan in the update to ensure
     # it overwrites the checkpoint state. LangGraph's Command(resume={...}) doesn't

@@ -207,7 +207,8 @@ async def execute_research_with_monitoring(
                 num_agents = len(modified_plan.get("proposed_agents", []))
                 print(f"🔍 DEBUG: Updating state with modified plan ({num_agents} agents)")
                 for idx, agent_config in enumerate(modified_plan.get("proposed_agents", []), 1):
-                    print(f"   Agent {idx}: {agent_config['domain']} ({agent_config['recommended_character']})")
+                    char = agent_config.get('character', {})
+                    print(f"   Agent {idx}: {char.get('name', 'Unknown')} - {char.get('domain', 'Unknown')}")
                 
                 # Update the state directly to overwrite the checkpoint
                 agent.update_state(config, {
@@ -267,14 +268,19 @@ async def execute_research_with_monitoring(
         final_state = agent.get_state(config)
         artifacts = final_state.values.get("conversation_artifacts", [])
         final_proposal = final_state.values.get("final_proposal", "")
+        ontology_data = final_state.values.get("ontology_data", {})
 
         print(f"✅ Research complete! Generated {len(artifacts)} artifacts")
+        if ontology_data:
+            num_concepts = len(ontology_data.get("ontology_concepts", []))
+            print(f"   📊 Extracted {num_concepts} ontology concepts")
 
         yield {
             "type": "complete",
             "status": "complete",
             "artifacts": artifacts,
-            "final_proposal": final_proposal
+            "final_proposal": final_proposal,
+            "ontology_data": ontology_data
         }
 
     except Exception as e:

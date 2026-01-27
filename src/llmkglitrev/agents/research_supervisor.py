@@ -80,7 +80,7 @@ max_researcher_iterations = 2  # Supervisor can loop 2 times (reduced from previ
 
 # Maximum number of concurrent research agents the supervisor can launch
 # This is passed to the lead_researcher_prompt to limit parallel research tasks
-max_concurrent_researchers = 2
+max_concurrent_researchers = 3
 
 # ===== SUPERVISOR NODES =====
 
@@ -328,8 +328,8 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                         retrieved_papers = state.get("retrieved_papers", [])
                         literature_subset = [
                             paper for paper in retrieved_papers
-                            if character.domain.lower() in paper.get("title", "").lower()
-                            or character.domain.lower() in paper.get("abstract", "").lower()
+                            if character.domain.lower() in (paper.get("title") or "").lower()
+                            or character.domain.lower() in (paper.get("abstract") or "").lower()
                         ]
 
                         # Create character agent with topic, seed papers, and search preferences (NEW)

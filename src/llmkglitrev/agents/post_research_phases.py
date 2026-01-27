@@ -253,16 +253,20 @@ Format as a numbered list:
 
 async def industry_partner_review_standalone(
     session_id: str,
-    final_proposal: str
+    final_proposal: str,
+    use_project_context: bool = True
 ) -> List[Dict[str, Any]]:
     """Phase 7: Industry partners review using OTHER researchers' ontologies.
 
     This is a STANDALONE function, not part of the main workflow.
     Industry partners load OTHER researchers' ontologies and provide feedback.
 
+    NEW: Can use project documents (PDF/DOCX) via RAG for alignment questions.
+
     Args:
         session_id: Session ID to load artifacts from
         final_proposal: The final research proposal from Phase 4
+        use_project_context: Whether to use project documents for alignment (default: True)
 
     Returns:
         List of industry partner feedback
@@ -273,6 +277,24 @@ async def industry_partner_review_standalone(
     print(f"Session ID: {session_id}")
     print(f"Partners will review using OTHER researchers' ontologies...")
     print(f"{'='*70}\n")
+
+    # Load project context if available
+    project_rag = None
+    if use_project_context:
+        try:
+            from llmkglitrev.utils.document_rag import ProjectDocumentRAG
+            project_rag = ProjectDocumentRAG(session_id)
+
+            if project_rag.load_index():
+                print(f"✓ Loaded project documentation context")
+                summary = project_rag.get_document_summary()
+                print(f"   Documents: {summary['num_documents']}")
+            else:
+                print(f"ℹ️  No project documentation available")
+                project_rag = None
+        except Exception as e:
+            print(f"⚠️  Could not load project context: {e}")
+            project_rag = None
 
     # Load unified characters from disk
     unified_manager = UnifiedCharacterManager()
@@ -326,11 +348,21 @@ async def industry_partner_review_standalone(
             for a in loaded_artifacts.values()
         ])
 
+        # Get project context if available
+        project_context = ""
+        if project_rag:
+            # Retrieve relevant context for this partner's focus area
+            context_query = f"{partner['focus']}: {final_proposal[:500]}"
+            project_context = project_rag.format_context_for_prompt(context_query, k=3)
+            print(f"   Retrieved project context ({len(project_context)} chars)")
+
         review_prompt = f"""
 You are a {partner['name']} reviewing this research proposal.
 
 IMPORTANT: Review using the ontologies and perspectives of these researchers:
 {ontology_list}
+
+{project_context}
 
 Research Proposal:
 {final_proposal[:2000]}...
@@ -338,26 +370,32 @@ Research Proposal:
 From your {partner['focus']} perspective, provide operational feedback:
 
 1. Project Alignment:
-   - How does this align with project objectives?
+   - How does this research align with project objectives{' (see project documentation)' if project_context else ''}?
    - What are potential misalignments?
+   - Does it fit within the project scope and goals?
 
 2. Implementation:
    - What are the concrete implementation steps?
    - What technical challenges do you foresee?
+   - How does this integrate with existing project infrastructure{' (if mentioned in docs)' if project_context else ''}?
 
 3. Resources:
    - What resources are needed (people, time, budget)?
    - What dependencies exist?
+   - Are the resource requirements realistic for the project{' (based on project constraints)' if project_context else ''}?
 
 4. Risks & Mitigation:
    - What are the main risks?
    - What mitigation strategies do you recommend?
+   - How might this impact project timeline or deliverables?
 
 5. Timeline:
    - What is a realistic timeline?
    - What are the key milestones?
+   - How does this fit within the overall project schedule{' (if known from docs)' if project_context else ''}?
 
 Focus on practical feasibility and actionable recommendations.
+{'Use the project documentation to assess alignment and feasibility.' if project_context else ''}
 """
 
         print(f"   Generating feedback...")

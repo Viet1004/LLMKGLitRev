@@ -6,76 +6,13 @@ their research outputs are stored together in session directories.
 """
 
 from pydantic import BaseModel, Field
-from typing import List, Dict, Literal, Optional
+from typing import List, Dict, Literal, Optional, Any
 from datetime import datetime
 from pathlib import Path
 import json
 
 # Import ResearchCharacter from schema
 from .schema import ResearchCharacter
-
-
-class DialogueNote(BaseModel):
-    """
-    A note that warrants follow-up in Socratic dialogue.
-
-    Dialogue notes are automatically extracted during research and represent
-    topics that deserve deeper exploration through questioning.
-    """
-
-    type: Literal[
-        "assumption",
-        "methodological_choice",
-        "limitation",
-        "alternative_approach",
-        "gap_identified"
-    ] = Field(
-        description="Type of dialogue note"
-    )
-
-    content: str = Field(
-        description="The specific content worth discussing"
-    )
-
-    suggested_question: str = Field(
-        description="Suggested follow-up question for Socratic dialogue"
-    )
-
-    priority: int = Field(
-        default=5,
-        ge=1,
-        le=10,
-        description="Question priority (1=low, 10=high)"
-    )
-
-    context: str = Field(
-        description="Context from research where this arose"
-    )
-
-    def __hash__(self):
-        """Make DialogueNote hashable for set operations."""
-        return hash((self.type, self.content[:50], self.priority))
-
-    def __eq__(self, other):
-        """Check equality based on type and content."""
-        if not isinstance(other, DialogueNote):
-            return False
-        return (self.type == other.type and
-                self.content[:50] == other.content[:50])
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "type": "assumption",
-                    "content": "We assume that the training data is representative",
-                    "suggested_question": "What evidence supports this assumption about data representativeness?",
-                    "priority": 7,
-                    "context": "During discussion of dataset selection"
-                }
-            ]
-        }
-    }
 
 
 class ConversationArtifact(BaseModel):
@@ -111,12 +48,6 @@ class ConversationArtifact(BaseModel):
         description="Detailed research notes"
     )
 
-    # Dialogue Preparation
-    dialogue_notes: List[DialogueNote] = Field(
-        default_factory=list,
-        description="Notes that warrant follow-up questions in Socratic dialogue"
-    )
-
     # Literature
     papers_consulted: List[str] = Field(
         default_factory=list,
@@ -139,6 +70,22 @@ class ConversationArtifact(BaseModel):
         description="Whether dialogue is currently active for this artifact"
     )
 
+    # Ontology Grounding (extracted after research to save tokens)
+    ontology_concepts: List[str] = Field(
+        default_factory=list,
+        description="Ontology concepts extracted from research output"
+    )
+
+    concept_relationships: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Relationships between concepts: [{source, target, relation, relation_type}]"
+    )
+
+    concept_hierarchy: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Hierarchical tree structure for tree visualization"
+    )
+
     # Timestamps
     created_at: datetime = Field(
         default_factory=datetime.now,
@@ -158,8 +105,7 @@ class ConversationArtifact(BaseModel):
                     "character_id": "ml_expert_critical",
                     "domain": "Machine Learning",
                     "research_output": "Research findings on deep learning for medical imaging...",
-                    "raw_notes": ["Found 5 relevant papers", "Key finding: transfer learning helps"],
-                    "dialogue_notes": []
+                    "raw_notes": ["Found 5 relevant papers", "Key finding: transfer learning helps"]
                 }
             ]
         }
@@ -220,8 +166,7 @@ class CharacterWithArtifact(BaseModel):
                         "session_id": "session-123",
                         "character_id": "ml_expert_critical",
                         "domain": "Machine Learning",
-                        "research_output": "Research findings...",
-                        "dialogue_notes": []
+                        "research_output": "Research findings..."
                     }
                 }
             ]
@@ -512,38 +457,6 @@ class ConversationArtifactManager:
                 print(f"Warning: Could not load artifact from {file_path}: {e}")
 
         return artifacts
-
-    def get_dialogue_notes(
-        self,
-        session_id: str,
-        character_id: Optional[str] = None,
-        min_priority: int = 1
-    ) -> List[DialogueNote]:
-        """
-        Get all dialogue notes from session, sorted by priority.
-
-        Args:
-            session_id: The session ID
-            character_id: Optional filter by character ID
-            min_priority: Minimum priority threshold
-
-        Returns:
-            List of dialogue notes sorted by priority (highest first)
-        """
-        artifacts = self.load_artifacts(session_id)
-
-        all_notes = []
-        for char_id, artifact in artifacts.items():
-            if character_id is None or char_id == character_id:
-                all_notes.extend(artifact.dialogue_notes)
-
-        # Filter by priority
-        filtered_notes = [note for note in all_notes if note.priority >= min_priority]
-
-        # Sort by priority (highest first)
-        filtered_notes.sort(key=lambda x: x.priority, reverse=True)
-
-        return filtered_notes
 
     def session_exists(self, session_id: str) -> bool:
         """

@@ -270,8 +270,6 @@ async def broad_literature_search(state: AgentState):
         # Deduplicate papers
         print(f"\n🔄 Deduplicating {len(all_papers)} total papers...")
         unique_papers = _deduplicate_papers(all_papers)
-        print(unique_papers[:5])
-        print(type(unique_papers[0]))
         # Sort by relevance (citations + recency)
         # unique_papers.sort(
         #     key=lambda x: (
@@ -450,7 +448,7 @@ def format_papers_for_llm(papers: List[Dict]) -> str:
 
         # Abstract (truncated)
         abstract = paper.get('abstract', 'No abstract available')
-        if len(abstract) > 300:
+        if abstract and len(abstract) > 300:
             abstract = abstract[:300] + "..."
         formatted += f"   Abstract: {abstract}\n"
 
@@ -520,6 +518,196 @@ def save_artifacts(state: AgentState) -> dict:
     return {}  # No state changes needed
 
 
+async def extract_ontology_concepts(state: AgentState) -> dict:
+    """
+    Extract ontology concepts from final proposal and agent artifacts.
+
+    This runs AFTER research completes to save tokens.
+    Extracts concepts only from final proposal, then maps back to which agents mentioned them.
+
+    Process:
+    1. Load domain ontology (EDAM or custom)
+    2. Extract concepts from final proposal
+    3. For each concept, find which agents mentioned it
+    4. Build relationships between concepts
+    5. Build hierarchical tree structure
+    6. Save to session directory
+
+    Args:
+        state: Contains final_proposal, conversation_artifacts, session_id
+
+    Returns:
+        Dictionary with ontology_data key
+    """
+    from llmkglitrev.ontology import DomainOntologyManager
+    from pathlib import Path
+    import json
+
+    session_id = state.get("session_id", "")
+    final_proposal = state.get("final_proposal", "")
+    conversation_artifacts = state.get("conversation_artifacts", [])
+
+    print("\n" + "="*70)
+    print("🧠 EXTRACTING ONTOLOGY CONCEPTS")
+    print("="*70)
+
+    if not final_proposal:
+        print("⚠️  No final proposal found, skipping ontology extraction")
+        return {}
+
+    # Check if any character has a custom ontology URL
+    custom_ontology_url = None
+    for artifact in conversation_artifacts:
+        character_config = artifact.get("character_config")
+        if character_config and isinstance(character_config, dict):
+            ont_url = character_config.get("ontology_url", "")
+            if ont_url:
+                custom_ontology_url = ont_url
+                print(f"   Found custom ontology URL from character '{character_config.get('name')}': {ont_url}")
+                break
+
+    # ONLY load ontology if user provided a URL
+    if not custom_ontology_url:
+        print("ℹ️  No custom ontology URL provided - skipping ontology extraction")
+        print("   Socratic dialogue will use priority-based ordering only (no taxonomy)")
+        return {
+            "ontology_data": {
+                "ontology_concepts": [],
+                "concept_labels": {},
+                "concept_relationships": [],
+                "concept_hierarchy": {},
+                "concept_clusters": {},
+                "concept_to_agents": {}
+            }
+        }
+
+    # Load custom ontology
+    print(f"\n📥 Loading custom ontology from: {custom_ontology_url}")
+    ontology = DomainOntologyManager(ontology_source="custom", custom_url=custom_ontology_url)
+    success = ontology.load()
+
+    if not success:
+        print("⚠️  Failed to load custom ontology - skipping ontology extraction")
+        print("   Socratic dialogue will use priority-based ordering only (no taxonomy)")
+        return {
+            "ontology_data": {
+                "ontology_concepts": [],
+                "concept_labels": {},
+                "concept_relationships": [],
+                "concept_hierarchy": {},
+                "concept_clusters": {},
+                "concept_to_agents": {}
+            }
+        }
+
+    # Extract concepts from FINAL PROPOSAL only
+    print(f"\n🔍 Extracting concepts from final proposal...")
+    proposal_concepts = ontology.extract_concepts(final_proposal)
+    print(f"   Found {len(proposal_concepts)} concepts in final proposal")
+
+    if not proposal_concepts:
+        print("⚠️  No concepts found in final proposal")
+        return {}
+
+    # For each concept, find which agents mentioned it
+    print(f"\n👥 Mapping concepts to agents...")
+    concept_to_agents = {}
+    for concept in proposal_concepts:
+        concept_to_agents[concept] = []
+
+        for artifact in conversation_artifacts:
+            research_output = artifact.get("research_output", "")
+            if concept.lower() in research_output.lower():
+                concept_to_agents[concept].append(artifact.get("character_id"))
+
+    # Build relationships between concepts
+    print(f"\n🔗 Building concept relationships...")
+    relationships = []
+    for i, concept in enumerate(proposal_concepts):
+        # Find related concepts using ontology
+        related_concepts = ontology.find_related_concepts(concept, max_results=5)
+
+        for rel_data in related_concepts:
+            rel_concept = rel_data.get("concept")
+            if rel_concept and rel_concept in proposal_concepts:  # Only include if also in proposal
+                relationship_type = ontology._find_relationship_type(concept, rel_concept)
+                relation_class = _classify_relation(relationship_type)
+
+                relationships.append({
+                    "source": concept,
+                    "target": rel_concept,
+                    "relation": relationship_type,
+                    "relation_type": relation_class
+                })
+
+    print(f"   Found {len(relationships)} relationships")
+
+    # Build hierarchical tree
+    print(f"\n🌳 Building concept hierarchy...")
+    hierarchy = ontology.build_concept_tree(proposal_concepts)
+
+    # Cluster concepts by domain (top-level parent)
+    print(f"\n📊 Clustering concepts...")
+    clusters = {}
+    for concept in proposal_concepts:
+        top_parent = ontology.get_top_level_parent(concept)
+
+        if top_parent not in clusters:
+            clusters[top_parent] = []
+
+        clusters[top_parent].append(concept)
+
+    print(f"   Created {len(clusters)} clusters")
+
+    # Create concept labels mapping (ID -> human-readable label)
+    print(f"\n🏷️  Creating concept labels...")
+    concept_labels = {}
+    for concept in proposal_concepts:
+        label = ontology.get_concept_label(concept)
+        concept_labels[concept] = label
+
+    # Save ontology data to session directory
+    if session_id:
+        ontology_data = {
+            "ontology_concepts": proposal_concepts,
+            "concept_labels": concept_labels,  # NEW: ID -> Label mapping
+            "concept_relationships": relationships,
+            "concept_hierarchy": hierarchy,
+            "concept_clusters": clusters,
+            "concept_to_agents": concept_to_agents
+        }
+
+        # Save to file
+        session_path = Path(f"sessions/{session_id}")
+        session_path.mkdir(parents=True, exist_ok=True)
+
+        ontology_file = session_path / "ontology_data.json"
+        with open(ontology_file, "w") as f:
+            json.dump(ontology_data, f, indent=2)
+
+        print(f"\n💾 Ontology data saved to: {ontology_file}")
+    else:
+        print("\n⚠️  No session ID, ontology data not saved to disk")
+        ontology_data = {}
+
+    print("✅ Ontology extraction complete\n")
+    print("="*70)
+
+    return {
+        "ontology_data": ontology_data
+    }
+
+
+def _classify_relation(relation: str) -> str:
+    """Classify relationship type for visualization."""
+    if relation in ["is_a", "subClassOf"]:
+        return "hierarchy"
+    elif relation in ["part_of", "hasPart"]:
+        return "part_of"
+    else:
+        return "association"
+
+
 async def final_research_proposal(state:AgentState | SupervisorState):
     """
     Supervisor Synthesis: Create Unified Research Proposal (Phase 4)
@@ -567,6 +755,24 @@ async def final_research_proposal(state:AgentState | SupervisorState):
     final_proposal = await writer_model.ainvoke([HumanMessage(content=final_research_proposal_prompt)])
 
     print(f"\n✅ Unified research proposal created ({len(final_proposal.content)} characters)")
+
+    # Save final proposal to disk
+    session_id = state.get("session_id", "")
+    if session_id:
+        from pathlib import Path
+        proposal_file = Path(f"sessions/{session_id}/final_proposal.md")
+
+        # Create parent directory if needed
+        proposal_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Save to file
+        with open(proposal_file, "w") as f:
+            f.write(final_proposal.content)
+
+        print(f"💾 Final proposal saved to: {proposal_file}")
+    else:
+        print("⚠️  Warning: No session ID found, final proposal not saved to disk")
+
     print("="*70)
     print("\n📝 This proposal will now be used for:")
     print("   • Phase 5: Socratic dialogue (characters ask critical questions)")
@@ -616,47 +822,38 @@ def instantiate_agents(state: AgentState) -> dict:
     active_characters = []
 
     for config in character_configs:
-        char_id = config.get("character_id")
-        domain = config.get("domain")
-        stance = config.get("stance", "neutral")
+        # Extract embedded character object
+        character_data = config.get("character", {})
         assigned_topic = config.get("assigned_topic", "")
         seed_papers = config.get("seed_papers", [])
 
-        print(f"\n📌 Configuring agent for {domain} ({stance})")
+        # Validate and create ResearchCharacter from embedded data
+        try:
+            character = ResearchCharacter.model_validate(character_data)
+        except Exception as e:
+            print(f"   ⚠️  Error validating character: {e}")
+            # Create fallback character
+            domain = character_data.get("domain", "Research")
+            character = ResearchCharacter(
+                character_id=f"agent_{domain.lower().replace(' ', '_')}",
+                name=character_data.get("name", f"{domain} Expert"),
+                domain=domain,
+                stance=character_data.get("stance", "neutral"),
+                system_prompt_template=f"You are a {domain} expert.",
+                sub_domains=[domain],
+                communication_style="academic",
+                expertise_areas=[],
+                typical_venues=[],
+                background=""
+            )
+
+        print(f"\n📌 Configuring agent: {character.name}")
+        print(f"   Domain: {character.domain} ({character.stance})")
         if assigned_topic:
             print(f"   🎯 Assigned topic: {assigned_topic}")
             print(f"   📄 Seed papers: {len(seed_papers)}")
-
-        if char_id != "custom":
-            # Load from system templates (Python constants)
-            try:
-                character = get_system_template(char_id)
-                print(f"   ✅ Loaded system template: {character.name}")
-            except KeyError:
-                print(f"   ⚠️  Template {char_id} not found, using fallback")
-                # Create a basic character if template not found
-                character = ResearchCharacter(
-                    character_id=f"agent_{domain.lower().replace(' ', '_')}",
-                    name=f"{domain} Expert",
-                    domain=domain,
-                    stance=stance,
-                    system_prompt_template=f"You are a {domain} expert with a {stance} perspective.",
-                    sub_domains=[domain],
-                    communication_style="academic"
-                )
-        else:
-            # Create custom character from config
-            custom_config = config.get("custom_config", {})
-            character = ResearchCharacter(
-                character_id=custom_config.get("character_id", f"custom_{domain.lower().replace(' ', '_')}"),
-                name=custom_config.get("name", f"{domain} Expert"),
-                domain=domain,
-                stance=stance,
-                system_prompt_template=custom_config.get("system_prompt", ""),
-                sub_domains=custom_config.get("sub_domains", [domain]),
-                communication_style=custom_config.get("communication_style", "academic")
-            )
-            print(f"   ✅ Created custom character: {character.name}")
+        print(f"   🎓 Expertise: {', '.join(character.expertise_areas[:3])}..." if character.expertise_areas else "")
+        print(f"   📚 Venues: {', '.join(character.typical_venues[:3])}..." if character.typical_venues else "")
 
         # Save character to session (artifact=None since research hasn't started yet)
         unified_manager.save_character(
@@ -985,6 +1182,7 @@ agent_builder.add_node("instantiate_agents", instantiate_agents)  # NEW: Create 
 agent_builder.add_node("supervisor_subgraph", supervisor_agent)
 agent_builder.add_node("save_artifacts", save_artifacts)  # NEW: Save artifacts to disk
 agent_builder.add_node("final_research_proposal", final_research_proposal)
+agent_builder.add_node("extract_ontology_concepts", extract_ontology_concepts)  # Extract ontology concepts
 agent_builder.add_node("identify_research_gaps", identify_research_gaps)  # PHASE 5
 agent_builder.add_node("run_socratic_dialogue", run_socratic_dialogue)  # PHASE 6
 agent_builder.add_node("industry_partner_review", industry_partner_review)  # PHASE 7
@@ -1021,8 +1219,11 @@ agent_builder.add_edge("supervisor_subgraph", "save_artifacts")
 # 8. Generate final proposal
 agent_builder.add_edge("save_artifacts", "final_research_proposal")
 
-# 9. End (Phases 1-4 complete)
-agent_builder.add_edge("final_research_proposal", END)
+# 9. Extract ontology concepts (after proposal is generated)
+agent_builder.add_edge("final_research_proposal", "extract_ontology_concepts")
+
+# 10. End (Phases 1-4 complete)
+agent_builder.add_edge("extract_ontology_concepts", END)
 
 # NOTE: Phases 5-7 nodes are defined above but not connected to the main workflow yet.
 # They will be triggered manually from the Streamlit UI tabs.

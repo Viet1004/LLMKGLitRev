@@ -23,8 +23,6 @@ from llmkglitrev.agents.prompts.research_summary import research_agent_prompt
 
 from llmkglitrev.agents.prompts.research_planning import plan_research_system_message, plan_research_human_message
 
-from llmkglitrev.characters import extract_dialogue_notes
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -159,20 +157,9 @@ async def research_formulation(state: ResearcherState) -> dict:
         )
     ]
 
-    # NEW: Extract dialogue notes for Socratic dialogue
-    dialogue_notes = extract_dialogue_notes(
-        messages=state.get("researcher_messages", []),
-        research_output=str(response.content),
-        max_notes_per_type=3
-    )
-
-    # Convert to dicts for JSON serialization
-    dialogue_notes_dicts = [note.model_dump() for note in dialogue_notes]
-
     return {
         "research_plan": str(response.content),
-        "raw_notes": ["\n".join(raw_notes)],
-        "dialogue_notes": dialogue_notes_dicts  # NEW
+        "raw_notes": ["\n".join(raw_notes)]
     }
 
 

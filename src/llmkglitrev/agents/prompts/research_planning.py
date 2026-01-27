@@ -18,33 +18,79 @@ propose_agents_prompt = """You are an expert research strategist. Given a resear
 3. Have access to relevant literature subset
 4. Bring a unique perspective (critical, constructive, or neutral)
 
-**Available Character Templates**:
-{available_characters}
+**IMPORTANT: You must generate complete character profiles for each agent. DO NOT reference pre-existing character templates.**
 
-For each proposed agent, provide:
-- **domain**: The domain of expertise (e.g., "Time Series Analysis", "Network Optimization", "Signal Processing")
-- **recommended_character**: ID of an existing character template to use (or "custom" if none fit)
-- **stance**: "critical", "constructive", or "neutral"
-- **search_scope**: Keywords and topics this agent should focus on
-- **preferred_databases**: List of databases to search from ["arxiv", "scopus", "ieee"]. Choose based on domain (e.g., CS prefers arxiv, Engineering prefers IEEE, Medical/Science prefers Scopus)
-- **preferred_venues**: List of 3-5 key conferences/journals for this domain (e.g., ["NeurIPS", "ICML"], ["IEEE CVPR", "IEEE TPAMI"], ["Nature Medicine", "Lancet"])
+For each proposed agent, you must create a complete character profile including:
+
+**Character Profile (all fields required)**:
+1. **name**: Descriptive name reflecting their specialty (e.g., "Federated Learning Privacy Expert", "Clinical AI Ethics Researcher")
+   - NOT generic names like "ML Expert" or "Researcher"
+   - Be specific to their exact sub-domain
+
+2. **domain**: Specific research domain (e.g., "Privacy-Preserving Machine Learning", "Clinical AI Ethics")
+   - Be precise, not just "Machine Learning" or "AI"
+
+3. **character_id**: Generate a unique ID like "privacy_ml_expert_2024" (lowercase with underscores)
+
+4. **stance**: "critical", "constructive", or "neutral"
+   - critical: Skeptical, identifies flaws and risks
+   - constructive: Supportive, explores opportunities
+   - neutral: Balanced, objective analysis
+
+5. **expertise_areas**: List 3-5 specific technical skills/methods (NOT general fields)
+   - GOOD: ["Differential privacy", "Federated optimization", "Privacy attack analysis"]
+   - BAD: ["Machine learning", "Data science", "Privacy"]
+
+6. **typical_venues**: List 0-3 key conferences/journals (OPTIONAL - leave empty [] if unsure)
+   - Only include venues you're confident about
+   - Examples: ["NeurIPS", "Nature Medicine"]
+   - Can be empty list [] - users will add venues later
+
+7. **preferred_databases**: List 2-3 databases (flexible - any database name is acceptable)
+   - Common options: arxiv, scopus, ieee, semantic_scholar, openalex, crossref, pubmed
+   - Choose based on field (e.g., medical→scopus/pubmed, CS→arxiv/semantic_scholar)
+
+8. **background**: 2-3 sentences about this character's perspective and research focus
+
+9. **communication_style**: Brief description (e.g., "Technical and rigorous", "Practical and application-focused")
+
+10. **description**: 1-2 sentences summarizing this character
+
+11. **sub_domains**: List 2-3 related sub-fields (e.g., ["Federated learning", "Privacy-preserving ML", "Secure computation"])
+
+**Additional Agent Fields**:
+- **search_scope**: Keywords and topics this agent should focus on (5-8 keywords)
 - **rationale**: Why this agent is needed for this research topic (2-3 sentences)
-- **custom_config**: If recommended_character is "custom", provide character configuration
 
 **CRITICAL CONSTRAINTS**:
-1. **research_strategy**: MUST be 2-3 sentences MAX (under 1000 characters). Be concise.
+1. **research_strategy**: MUST be 2-3 sentences MAX (under 500 characters). Be concise.
 2. Propose 2-4 agents (optimal for most topics)
-3. Ensure agents cover complementary aspects (don't duplicate domains)
-4. Balance perspectives (mix critical and constructive stances)
-5. Consider interdisciplinary connections
-6. Match agents to available literature AND the research topic
+3. Each agent must have a character object with required fields (name, domain, character_id, stance, expertise_areas, background)
+4. Ensure agents cover complementary aspects (don't duplicate domains)
+5. Balance perspectives (mix critical and constructive stances)
+6. **typical_venues can be empty [] if unsure** - don't make up venue names
+7. **preferred_databases is flexible** - any database name is acceptable
 
-**Example Output Structure** (you should adapt this to the specific topic):
-- Agent 1: Domain Expert (critical) - Evaluates technical approaches
-- Agent 2: Application Expert (constructive) - Provides practical context
-- Agent 3: Methods Expert (neutral) - Considers methodological aspects
+**Example Agent Structure** (adapt to your specific topic):
+```
+Agent 1:
+  character:
+    name: "Privacy-Preserving ML Researcher"
+    domain: "Privacy-Preserving Machine Learning"
+    character_id: "privacy_ml_researcher"
+    expertise_areas: ["Differential privacy", "Federated optimization", "Secure aggregation"]
+    typical_venues: []  # Empty is OK - users will add later
+    preferred_databases: ["arxiv", "semantic_scholar"]
+    stance: "critical"
+    background: "Expert in privacy-preserving ML with focus on federated learning."
+    communication_style: "Technical and rigorous"
+    description: "Privacy and security expert for ML systems"
+    sub_domains: ["Federated learning", "Privacy-preserving ML"]
+  search_scope: ["federated learning", "differential privacy", "privacy attacks"]
+  rationale: "Evaluates privacy guarantees and vulnerabilities in distributed learning."
+```
 
-Provide your proposal as structured output."""
+Provide your proposal as structured output with complete character objects for each agent."""
 
 plan_research_system_message = """You are a research assistant that has conducted research on a topic by calling several tools and web searches. Your job is now to clean up the findings, but preserve all of the relevant statements and information that the researcher has gathered. For context, today's date is {date}.
 

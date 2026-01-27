@@ -32,6 +32,13 @@ class ResearchCharacter(BaseModel):
         examples=[["deep learning", "computer vision", "NLP"]]
     )
 
+    # Expertise (more specific than sub_domains)
+    expertise_areas: List[str] = Field(
+        default_factory=list,
+        description="Specific technical skills and expertise (e.g., methods, techniques, tools)",
+        examples=[["Attention mechanisms", "Transformer architectures", "Few-shot learning", "Meta-learning"]]
+    )
+
     # Field-Specific Knowledge
     typical_venues: List[str] = Field(
         default_factory=list,
@@ -39,10 +46,11 @@ class ResearchCharacter(BaseModel):
         examples=[["NeurIPS", "ICML", "ICLR", "CVPR", "IEEE TPAMI", "Nature Machine Intelligence"]]
     )
 
-    preferred_databases: List[Literal["arxiv", "scopus", "ieee"]] = Field(
-        default_factory=lambda: ["arxiv", "scopus", "ieee"],
-        description="Preferred academic databases to search",
-        examples=[["arxiv", "scopus"], ["ieee", "scopus"], ["arxiv", "ieee", "scopus"]]
+    # Relaxed constraint: Accept any string for databases to avoid validation errors
+    preferred_databases: List[str] = Field(
+        default_factory=lambda: ["arxiv", "semantic_scholar", "openalex"],
+        description="Preferred academic databases to search (e.g., arxiv, scopus, ieee, semantic_scholar, openalex, crossref, pubmed)",
+        examples=[["arxiv", "semantic_scholar"], ["scopus", "ieee"], ["arxiv", "semantic_scholar", "openalex"]]
     )
 
     typical_methods: List[str] = Field(
@@ -69,6 +77,11 @@ class ResearchCharacter(BaseModel):
         description="Overall attitude toward research proposals"
     )
 
+    background: str = Field(
+        default="",
+        description="Brief background about this character's perspective and research focus (2-3 sentences)"
+    )
+
     communication_style: str = Field(
         default="academic",
         description="How the character communicates"
@@ -87,18 +100,18 @@ class ResearchCharacter(BaseModel):
         examples=[["methodological_justification", "assumption_challenge"]]
     )
 
-    # Metadata
+    # Metadata (optional fields - auto-populated when not provided by LLM)
     created_by: str = Field(
         default="system",
         description="User who created this character"
     )
-    created_at: datetime = Field(
-        default_factory=datetime.now,
-        description="When the character was created"
+    created_at: Optional[datetime] = Field(
+        default=None,
+        description="When the character was created (auto-populated if not provided)"
     )
-    last_modified: datetime = Field(
-        default_factory=datetime.now,
-        description="When the character was last modified"
+    last_modified: Optional[datetime] = Field(
+        default=None,
+        description="When the character was last modified (auto-populated if not provided)"
     )
     version: str = Field(
         default="1.0",
@@ -109,10 +122,16 @@ class ResearchCharacter(BaseModel):
         description="Free-text description of character's role"
     )
 
-    # System Prompt Template
+    # System Prompt Template (optional - LLM doesn't need to provide this)
     system_prompt_template: str = Field(
         default="",
         description="Template for generating system prompts (with placeholders)"
+    )
+
+    # Ontology Configuration (optional - user provides via UI)
+    ontology_url: str = Field(
+        default="",
+        description="Optional URL to domain-specific OWL ontology file for concept extraction"
     )
 
     model_config = {

@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain.chat_models import init_chat_model
 
 from llmkglitrev.characters.schema import ResearchCharacter
-from llmkglitrev.characters.artifact import ConversationArtifact, DialogueNote
+from llmkglitrev.characters.artifact import ConversationArtifact
 from llmkglitrev.agents.research_agents import research_agent
 from llmkglitrev.agents.states import ResearcherState
 from llmkglitrev.agents.prompts.ontology_grounded_prompt import build_ontology_grounded_prompt
@@ -258,13 +258,6 @@ Remember: Always write in English and prioritize academic rigor."""
         self.artifact.research_output = result.get("research_plan", "")
         self.artifact.raw_notes = result.get("raw_notes", [])
         self.artifact.last_updated = datetime.now()
-
-        # Convert dialogue_notes from dicts to DialogueNote objects
-        dialogue_notes_dicts = result.get("dialogue_notes", [])
-        self.artifact.dialogue_notes = [
-            DialogueNote.model_validate(note_dict)
-            for note_dict in dialogue_notes_dicts
-        ]
 
         # Step 7: Update papers_consulted with deep research results
         if self.papers_read:
@@ -562,24 +555,6 @@ Remember: Always write in English and prioritize academic rigor."""
             The conversation artifact
         """
         return self.artifact
-
-    def get_dialogue_notes(self, min_priority: int = 1) -> List[DialogueNote]:
-        """
-        Get dialogue notes filtered by priority.
-
-        Args:
-            min_priority: Minimum priority threshold
-
-        Returns:
-            List of dialogue notes sorted by priority (highest first)
-        """
-        filtered = [
-            note for note in self.artifact.dialogue_notes
-            if note.priority >= min_priority
-        ]
-        # Sort by priority (highest first)
-        filtered.sort(key=lambda x: x.priority, reverse=True)
-        return filtered
 
     def __repr__(self) -> str:
         """String representation."""
